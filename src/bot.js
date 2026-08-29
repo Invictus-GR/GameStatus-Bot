@@ -211,7 +211,22 @@ client.on('interactionCreate', async interaction => {
 
   // /changelog command
   if (interaction.isChatInputCommand() && interaction.commandName === 'changelog') {
+    const allowedRoleIds = [
+      '1529632873987178668',
+      '1540715768625496135',
+      '1538451886758170744'
+    ];
 
+    const hasPermission = interaction.member.roles.cache.some(
+      role => allowedRoleIds.includes(role.id)
+    );
+
+    if (!hasPermission) {
+      return interaction.reply({
+        content: '❌ You do not have permission to use this command.',
+        ephemeral: true
+      });
+    }
     const modal = new ModalBuilder()
       .setCustomId('changelogModal')
       .setTitle('TLC Server Changelog');
