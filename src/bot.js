@@ -1,7 +1,8 @@
 import {
   Client,
   GatewayIntentBits,
-  ActivityType
+  ActivityType,
+  EmbedBuilder
 } from 'discord.js';
 
 import fetch from 'node-fetch';
@@ -29,15 +30,11 @@ async function getStatusMessage() {
   const messages = await channel.messages.fetch({ limit: 20 });
 
   statusMessage = messages.find(
-    message =>
-      message.author.id === client.user.id &&
-      message.content.includes('Server:')
+    message => message.author.id === client.user.id
   );
 
   if (!statusMessage) {
-    statusMessage = await channel.send(
-      '🟡 **Server:** CHECKING...\n👥 **Players:** Checking...'
-    );
+    statusMessage = await channel.send('Loading server status...');
   }
 
   return statusMessage;
@@ -92,11 +89,33 @@ async function updateServerStatus() {
       status: 'online'
     });
 
+    const embed = new EmbedBuilder()
+      .setTitle('⚔️ TLC Ultra Hardcore')
+      .setDescription('### 🟢 SERVER ONLINE')
+      .addFields(
+        {
+          name: '👥 Players',
+          value: `**${playerDisplay}**`,
+          inline: true
+        },
+        {
+          name: '📡 Status',
+          value: '**ONLINE**',
+          inline: true
+        }
+      )
+      .setColor(0x57F287)
+      .setFooter({
+        text: 'TLC Server Status • Auto-update every 2 minutes'
+      })
+      .setTimestamp();
+
     const message = await getStatusMessage();
 
-    await message.edit(
-      `🟢 **Server:** ONLINE\n👥 **Players:** ${playerDisplay}`
-    );
+    await message.edit({
+      content: '',
+      embeds: [embed]
+    });
 
     console.log(`Status updated: 🟢 ONLINE | ${playerDisplay}`);
 
@@ -114,11 +133,27 @@ async function updateServerStatus() {
     });
 
     try {
+      const embed = new EmbedBuilder()
+        .setTitle('⚔️ TLC Ultra Hardcore')
+        .setDescription('### 🔴 SERVER OFFLINE')
+        .addFields({
+          name: '📡 Status',
+          value: '**OFFLINE**',
+          inline: true
+        })
+        .setColor(0xED4245)
+        .setFooter({
+          text: 'TLC Server Status • Auto-update every 2 minutes'
+        })
+        .setTimestamp();
+
       const message = await getStatusMessage();
 
-      await message.edit(
-        '🔴 **Server:** OFFLINE\n👥 **Players:** 0/128'
-      );
+      await message.edit({
+        content: '',
+        embeds: [embed]
+      });
+
     } catch {}
   }
 }
