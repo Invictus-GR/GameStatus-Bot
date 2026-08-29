@@ -2,7 +2,10 @@ import {
   Client,
   GatewayIntentBits,
   ActivityType,
-  EmbedBuilder
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle
 } from 'discord.js';
 
 import fetch from 'node-fetch';
@@ -18,12 +21,18 @@ const CHANNEL_ID = '1543309765243834428';
 
 let statusMessage = null;
 
-async function getStatusMessage() {
+async function getChannel() {
   const channel = await client.channels.fetch(CHANNEL_ID);
 
   if (!channel || !channel.isTextBased()) {
     throw new Error('Status channel not found');
   }
+
+  return channel;
+}
+
+async function getStatusMessage() {
+  const channel = await getChannel();
 
   if (statusMessage) return statusMessage;
 
@@ -38,6 +47,16 @@ async function getStatusMessage() {
   }
 
   return statusMessage;
+}
+
+function createButton() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setLabel('View Server')
+      .setEmoji('🎮')
+      .setStyle(ButtonStyle.Link)
+      .setURL(SERVER_URL)
+  );
 }
 
 async function updateServerStatus() {
@@ -89,6 +108,13 @@ async function updateServerStatus() {
       status: 'online'
     });
 
+    const channel = await getChannel();
+
+    const guildIcon = channel.guild?.iconURL({
+      extension: 'png',
+      size: 256
+    });
+
     const embed = new EmbedBuilder()
       .setTitle('⚔️ TLC Ultra Hardcore')
       .setDescription('### 🟢 SERVER ONLINE')
@@ -110,11 +136,16 @@ async function updateServerStatus() {
       })
       .setTimestamp();
 
+    if (guildIcon) {
+      embed.setThumbnail(guildIcon);
+    }
+
     const message = await getStatusMessage();
 
     await message.edit({
       content: '',
-      embeds: [embed]
+      embeds: [embed],
+      components: [createButton()]
     });
 
     console.log(`Status updated: 🟢 ONLINE | ${playerDisplay}`);
@@ -133,6 +164,13 @@ async function updateServerStatus() {
     });
 
     try {
+      const channel = await getChannel();
+
+      const guildIcon = channel.guild?.iconURL({
+        extension: 'png',
+        size: 256
+      });
+
       const embed = new EmbedBuilder()
         .setTitle('⚔️ TLC Ultra Hardcore')
         .setDescription('### 🔴 SERVER OFFLINE')
@@ -147,11 +185,16 @@ async function updateServerStatus() {
         })
         .setTimestamp();
 
+      if (guildIcon) {
+        embed.setThumbnail(guildIcon);
+      }
+
       const message = await getStatusMessage();
 
       await message.edit({
         content: '',
-        embeds: [embed]
+        embeds: [embed],
+        components: [createButton()]
       });
 
     } catch {}
