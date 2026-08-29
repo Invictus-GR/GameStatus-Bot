@@ -22,7 +22,7 @@ const SUCCESS = chalk.bgGreen.bold;
 // Configuration paths
 const CONFIG_DIR = path.resolve(
 	path.dirname(fileURLToPath(import.meta.url)),
-	'../config'
+	'./config'
 );
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
