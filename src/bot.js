@@ -168,7 +168,10 @@ for (const [, message] of alerts) {
   const embed = new EmbedBuilder()
     .setTitle(title)
     .setDescription(description)
+ 
     .setColor(color)
+.setImage('https://raw.githubusercontent.com/Invictus-GR/GameStatus-Bot/main/TLC-queue-banner.png')
+
     .setFooter({ text: 'TLC Command • Live Server Alert' })
     .setTimestamp();
 
