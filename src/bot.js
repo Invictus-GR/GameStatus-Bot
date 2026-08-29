@@ -463,7 +463,7 @@ async function main() {
 		const updateInterval = 1000 * 60 * configData.updateInterval;
 
 		for (const serverConfig of runningServers) {
-			const botToken = serverConfig.botToken;
+			const botToken = process.env.DISCORD_BOT_TOKEN || serverConfig.botToken;
 
 			if (!botToken) {
 				console.error(
