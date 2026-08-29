@@ -1,0 +1,23 @@
+{
+  "maxServers": 1,
+  "updateInterval": 1,
+  "statusPrefix": "Players",
+  "statusSpacer": "|",
+  "SERVERS": [
+    {
+      "RUNNING": true,
+      "serverName": "TLC Ultra Hardcore",
+      "botToken": "PUT_YOUR_DISCORD_BOT_TOKEN_HERE",
+      "apiType": 1,
+      "apiUrl": "https://api.battlemetrics.com/servers/40653024",
+      "serverIp": "",
+      "serverPort": "",
+      "queueMessage": "in queue.",
+      "gameType": "reforger",
+      "showMap": false,
+      "mapPrefix": "",
+      "debug": false,
+      "notificationChannelId": ""
+    }
+  ]
+}
