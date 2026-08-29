@@ -24,6 +24,8 @@ const SERVER_URL =
 const CHANNEL_ID = '1543309765243834428';
 const CHANGELOG_CHANNEL_ID = '1535567655442972722';
 const WARNING_LOG_CHANNEL_ID = '1540989189380640858';
+const GENERAL_CHANNEL_ID = '1529549362563125271';
+let lastQueueAlertLevel = 0;
 const changelogCommand = new SlashCommandBuilder()
   .setName('changelog')
   .setDescription('Create a TLC server changelog');
@@ -83,6 +85,84 @@ function createButton() {
 }
 
 async function updateServerStatus() {
+  async function checkQueueAlerts(queue, players, maxPlayers) {
+  let level = 0;
+
+  if (queue >= 25) {
+    level = 25;
+  } else if (queue >= 20) {
+    level = 20;
+  } else if (queue >= 10) {
+    level = 10;
+  }
+
+  if (level === 0) {
+    lastQueueAlertLevel = 0;
+    return;
+  }
+
+  if (level <= lastQueueAlertLevel) {
+    return;
+  }
+
+  const channel = await client.channels.fetch(GENERAL_CHANNEL_ID);
+
+  if (!channel || !channel.isTextBased()) {
+    console.error('General channel not found');
+    return;
+  }
+
+  let title;
+  let description;
+  let color;
+
+  if (level === 10) {
+    title = '⚠️ TLC IS FILLING UP';
+    description =
+      `👥 **(+${queue}) ${players}/${maxPlayers}**\n\n` +
+      `The queue is building.\n` +
+      `If you're joining, now's the time.`;
+
+    color = 0xFEE75C;
+  }
+
+  if (level === 20) {
+    title = '🔥 TLC IS PACKED';
+    description =
+      `👥 **(+${queue}) ${players}/${maxPlayers}**\n\n` +
+      `Heavy queue in progress.\n` +
+      `Expect a wait before getting in.`;
+
+    color = 0xF47B20;
+  }
+
+  if (level === 25) {
+    title = '🚨 TLC QUEUE IS MAXED';
+    description =
+      `👥 **(+${queue}) ${players}/${maxPlayers}**\n\n` +
+      `Queue capacity reached.\n` +
+      `Good luck getting through the gates.`;
+
+    color = 0xED4245;
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle(title)
+    .setDescription(description)
+    .setColor(color)
+    .setFooter({ text: 'TLC Command • Live Server Alert' })
+    .setTimestamp();
+
+  await channel.send({
+    content: '@here',
+    embeds: [embed],
+    allowedMentions: {
+      parse: ['everyone']
+    }
+  });
+
+  lastQueueAlertLevel = level;
+}
   try {
     const response = await fetch(SERVER_URL, {
       headers: {
@@ -115,7 +195,7 @@ async function updateServerStatus() {
     const players = Number(playersMatch[1]);
     const maxPlayers = Number(playersMatch[2]);
     const queue = queueMatch ? Number(queueMatch[1]) : 0;
-
+await checkQueueAlerts(queue, players, maxPlayers);
     const playerDisplay =
       queue > 0
         ? `(+${queue}) ${players}/${maxPlayers}`
