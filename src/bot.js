@@ -5,7 +5,11 @@ import {
   EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle
+  ButtonStyle,
+  SlashCommandBuilder,
+ModalBuilder,
+TextInputBuilder,
+TextInputStyle,
 } from 'discord.js';
 
 import fetch from 'node-fetch';
@@ -18,7 +22,10 @@ const SERVER_URL =
   'https://www.armahq.com/servers/1d8007f8-bc4d-45a6-86db-f1091aed4300';
 
 const CHANNEL_ID = '1543309765243834428';
-
+const CHANGELOG_CHANNEL_ID = '1535567655442972722';
+const changelogCommand = new SlashCommandBuilder()
+  .setName('changelog')
+  .setDescription('Create a TLC server changelog');
 let statusMessage = null;
 
 async function getChannel() {
@@ -200,8 +207,123 @@ async function updateServerStatus() {
     } catch {}
   }
 }
+client.on('interactionCreate', async interaction => {
 
-client.once('clientReady', () => {
+  // /changelog command
+  if (interaction.isChatInputCommand() && interaction.commandName === 'changelog') {
+
+    const modal = new ModalBuilder()
+      .setCustomId('changelogModal')
+      .setTitle('TLC Server Changelog');
+
+    const addedInput = new TextInputBuilder()
+      .setCustomId('added')
+      .setLabel('Added')
+      .setPlaceholder('What was added?')
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(false);
+
+    const fixedInput = new TextInputBuilder()
+      .setCustomId('fixed')
+      .setLabel('Fixed')
+      .setPlaceholder('What was fixed?')
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(false);
+
+    const changedInput = new TextInputBuilder()
+      .setCustomId('changed')
+      .setLabel('Changed')
+      .setPlaceholder('What was changed?')
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(false);
+
+    const removedInput = new TextInputBuilder()
+      .setCustomId('removed')
+      .setLabel('Removed')
+      .setPlaceholder('What was removed?')
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(false);
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(addedInput),
+      new ActionRowBuilder().addComponents(fixedInput),
+      new ActionRowBuilder().addComponents(changedInput),
+      new ActionRowBuilder().addComponents(removedInput)
+    );
+
+    await interaction.showModal(modal);
+  }
+
+  // Changelog form submitted
+  if (interaction.isModalSubmit() && interaction.customId === 'changelogModal') {
+
+    const added = interaction.fields.getTextInputValue('added');
+    const fixed = interaction.fields.getTextInputValue('fixed');
+    const changed = interaction.fields.getTextInputValue('changed');
+    const removed = interaction.fields.getTextInputValue('removed');
+
+    const fields = [];
+
+    if (added) {
+      fields.push({
+        name: '➕ Added',
+        value: added
+      });
+    }
+
+    if (fixed) {
+      fields.push({
+        name: '🔧 Fixed',
+        value: fixed
+      });
+    }
+
+    if (changed) {
+      fields.push({
+        name: '🔄 Changed',
+        value: changed
+      });
+    }
+
+    if (removed) {
+      fields.push({
+        name: '➖ Removed',
+        value: removed
+      });
+    }
+
+    if (fields.length === 0) {
+      return interaction.reply({
+        content: '❌ You need to fill in at least one field.',
+        ephemeral: true
+      });
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle('🛠️ TLC SERVER CHANGELOG')
+      .setDescription('Latest changes to the TLC server.')
+      .addFields(fields)
+      .setColor(0x5865F2)
+      .setFooter({
+        text: `Updated by ${interaction.user.username}`
+      })
+      .setTimestamp();
+
+    const channel = await client.channels.fetch(CHANGELOG_CHANNEL_ID);
+
+    await channel.send({
+      embeds: [embed]
+    });
+
+    await interaction.reply({
+      content: '✅ Changelog published.',
+      ephemeral: true
+    });
+  }
+});
+client.once('clientReady', async () => {
+  await client.application.commands.set([changelogCommand]);
+console.log('/changelog command registered');
   console.log(`Discord bot connected as ${client.user.tag}`);
 
   updateServerStatus();
