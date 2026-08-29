@@ -25,7 +25,7 @@ const CHANNEL_ID = '1543309765243834428';
 const CHANGELOG_CHANNEL_ID = '1535567655442972722';
 const WARNING_LOG_CHANNEL_ID = '1540989189380640858';
 const GENERAL_CHANNEL_ID = '1529549362563125271';
-let lastQueueAlertLevel = 0;
+
 const changelogCommand = new SlashCommandBuilder()
   .setName('changelog')
   .setDescription('Create a TLC server changelog');
@@ -83,9 +83,24 @@ function createButton() {
       .setURL(SERVER_URL)
   );
 }
+async function checkQueueAlerts(queue, players, maxPlayers) {
+  const channel = await client.channels.fetch(GENERAL_CHANNEL_ID);
 
-async function updateServerStatus() {
-  async function checkQueueAlerts(queue, players, maxPlayers) {
+  if (!channel || !channel.isTextBased()) return;
+
+  const messages = await channel.messages.fetch({ limit: 50 });
+
+  const alerts = messages.filter(message =>
+    message.author.id === client.user.id &&
+    message.embeds?.[0]?.footer?.text === 'TLC Command • Live Server Alert'
+  );
+
+  const previousAlert = alerts.first();
+for (const [, message] of alerts) {
+  if (previousAlert && message.id !== previousAlert.id) {
+    await message.delete().catch(() => {});
+  }
+}
   let level = 0;
 
   if (queue >= 25) {
@@ -96,19 +111,26 @@ async function updateServerStatus() {
     level = 10;
   }
 
+  // Queue below 10 = reset
   if (level === 0) {
-    lastQueueAlertLevel = 0;
+    for (const [, message] of alerts) {
+      await message.delete().catch(() => {});
+    }
     return;
   }
 
-  if (level <= lastQueueAlertLevel) {
-    return;
+  let previousLevel = 0;
+
+  if (previousAlert) {
+    const title = previousAlert.embeds[0]?.title || '';
+
+    if (title.includes('MAXED')) previousLevel = 25;
+    else if (title.includes('PACKED')) previousLevel = 20;
+    else if (title.includes('FILLING')) previousLevel = 10;
   }
 
-  const channel = await client.channels.fetch(GENERAL_CHANNEL_ID);
-
-  if (!channel || !channel.isTextBased()) {
-    console.error('General channel not found');
+  // Already sent this level or a higher one
+  if (level <= previousLevel) {
     return;
   }
 
@@ -122,7 +144,6 @@ async function updateServerStatus() {
       `👥 **(+${queue}) ${players}/${maxPlayers}**\n\n` +
       `The queue is building.\n` +
       `If you're joining, now's the time.`;
-
     color = 0xFEE75C;
   }
 
@@ -132,7 +153,6 @@ async function updateServerStatus() {
       `👥 **(+${queue}) ${players}/${maxPlayers}**\n\n` +
       `Heavy queue in progress.\n` +
       `Expect a wait before getting in.`;
-
     color = 0xF47B20;
   }
 
@@ -142,7 +162,6 @@ async function updateServerStatus() {
       `👥 **(+${queue}) ${players}/${maxPlayers}**\n\n` +
       `Queue capacity reached.\n` +
       `Good luck getting through the gates.`;
-
     color = 0xED4245;
   }
 
@@ -153,6 +172,12 @@ async function updateServerStatus() {
     .setFooter({ text: 'TLC Command • Live Server Alert' })
     .setTimestamp();
 
+  // Delete previous queue alert
+  for (const [, message] of alerts) {
+    await message.delete().catch(() => {});
+  }
+
+  // Send the new level
   await channel.send({
     content: '@here',
     embeds: [embed],
@@ -161,8 +186,10 @@ async function updateServerStatus() {
     }
   });
 
-  lastQueueAlertLevel = level;
+  console.log(`Queue alert sent: ${level}+`);
 }
+async function updateServerStatus() {
+  
   try {
     const response = await fetch(SERVER_URL, {
       headers: {
