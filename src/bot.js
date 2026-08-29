@@ -13,6 +13,36 @@ const client = new Client({
 const SERVER_URL =
   'https://www.armahq.com/servers/1d8007f8-bc4d-45a6-86db-f1091aed4300';
 
+const CHANNEL_ID = '1543309765243834428';
+
+let statusMessage = null;
+
+async function getStatusMessage() {
+  const channel = await client.channels.fetch(CHANNEL_ID);
+
+  if (!channel || !channel.isTextBased()) {
+    throw new Error('Status channel not found');
+  }
+
+  if (statusMessage) return statusMessage;
+
+  const messages = await channel.messages.fetch({ limit: 20 });
+
+  statusMessage = messages.find(
+    message =>
+      message.author.id === client.user.id &&
+      message.content.includes('Server:')
+  );
+
+  if (!statusMessage) {
+    statusMessage = await channel.send(
+      '🟡 **Server:** CHECKING...\n👥 **Players:** Checking...'
+    );
+  }
+
+  return statusMessage;
+}
+
 async function updateServerStatus() {
   try {
     const response = await fetch(SERVER_URL, {
@@ -45,27 +75,30 @@ async function updateServerStatus() {
 
     const players = Number(playersMatch[1]);
     const maxPlayers = Number(playersMatch[2]);
+    const queue = queueMatch ? Number(queueMatch[1]) : 0;
 
-    const queue = queueMatch
-      ? Number(queueMatch[1])
-      : 0;
-
-    const status =
+    const playerDisplay =
       queue > 0
-        ? `🟢 ONLINE | (+${queue}) ${players}/${maxPlayers}`
-        : `🟢 ONLINE | ${players}/${maxPlayers}`;
+        ? `(+${queue}) ${players}/${maxPlayers}`
+        : `${players}/${maxPlayers}`;
 
     await client.user.setPresence({
       activities: [
         {
-          name: status,
+          name: `🟢 ONLINE | ${playerDisplay}`,
           type: ActivityType.Custom
         }
       ],
       status: 'online'
     });
 
-    console.log(`Status updated: ${status}`);
+    const message = await getStatusMessage();
+
+    await message.edit(
+      `🟢 **Server:** ONLINE\n👥 **Players:** ${playerDisplay}`
+    );
+
+    console.log(`Status updated: 🟢 ONLINE | ${playerDisplay}`);
 
   } catch (error) {
     console.error('Server status error:', error.message);
@@ -79,6 +112,14 @@ async function updateServerStatus() {
       ],
       status: 'idle'
     });
+
+    try {
+      const message = await getStatusMessage();
+
+      await message.edit(
+        '🔴 **Server:** OFFLINE\n👥 **Players:** 0/128'
+      );
+    } catch {}
   }
 }
 
