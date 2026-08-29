@@ -182,12 +182,11 @@ for (const [, message] of alerts) {
 
   // Send the new level
   await channel.send({
-    content: '@here',
-    embeds: [embed],
-    allowedMentions: {
-      parse: ['everyone']
-    }
-  });
+ 
+  embeds: [embed]
+});
+    
+ 
 
   console.log(`Queue alert sent: ${level}+`);
 }
