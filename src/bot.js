@@ -312,8 +312,13 @@ client.on('interactionCreate', async interaction => {
     const channel = await client.channels.fetch(CHANGELOG_CHANNEL_ID);
 
     await channel.send({
-      embeds: [embed]
-    });
+  content: '@everyone',
+  embeds: [embed],
+  allowedMentions: {
+    parse: ['everyone']
+  }
+});
+      
 
     await interaction.reply({
       content: '✅ Changelog published.',
