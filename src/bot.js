@@ -435,8 +435,10 @@ client.on('interactionCreate', async interaction => {
   });
 });
 client.once('clientReady', async () => {
- const guild = client.guilds.cache.first();
-await guild.commands.set([changelogCommand, warnCommand]);
+  await client.application.commands.set([]);
+
+  const guild = client.guilds.cache.first();
+  await guild.commands.set([changelogCommand, warnCommand]);
 console.log('/changelog command registered');
   console.log(`Discord bot connected as ${client.user.tag}`);
 
