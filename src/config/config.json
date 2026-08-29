@@ -1,6 +1,6 @@
 {
   "maxServers": 1,
-  "updateInterval": 1,
+  "updateInterval": 2,
   "statusPrefix": "Players",
   "statusSpacer": "|",
   "SERVERS": [
