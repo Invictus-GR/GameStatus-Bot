@@ -23,9 +23,25 @@ const SERVER_URL =
 
 const CHANNEL_ID = '1543309765243834428';
 const CHANGELOG_CHANNEL_ID = '1535567655442972722';
+const WARNING_LOG_CHANNEL_ID = '1540989189380640858';
 const changelogCommand = new SlashCommandBuilder()
   .setName('changelog')
   .setDescription('Create a TLC server changelog');
+const warnCommand = new SlashCommandBuilder()
+  .setName('warn')
+  .setDescription('Send an official TLC warning to a user')
+  .addUserOption(option =>
+    option
+      .setName('user')
+      .setDescription('User to warn')
+      .setRequired(true)
+  )
+  .addStringOption(option =>
+    option
+      .setName('reason')
+      .setDescription('Reason for the warning')
+      .setRequired(true)
+  );
 let statusMessage = null;
 
 async function getChannel() {
@@ -341,8 +357,85 @@ client.on('interactionCreate', async interaction => {
     });
   }
 });
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+  if (interaction.commandName !== 'warn') return;
+
+  const allowedRoleIds = [
+    '1540715768625496135',
+    '1529632873987178668',
+    '1538451886758170744'
+  ];
+
+  const hasPermission = interaction.member.roles.cache.some(role =>
+    allowedRoleIds.includes(role.id)
+  );
+
+  if (!hasPermission) {
+    return interaction.reply({
+      content: '❌ You do not have permission to use this command.',
+      ephemeral: true
+    });
+  }
+
+  const user = interaction.options.getUser('user');
+  const reason = interaction.options.getString('reason');
+
+  const warningEmbed = new EmbedBuilder()
+    .setTitle('⚠️ TLC OFFICIAL WARNING')
+    .setDescription(
+      `You have received an official warning from **The Last Coalition Staff**.\n\n**Reason:**\n${reason}`
+    )
+    .setColor(0xED4245)
+    .setFooter({ text: 'The Last Coalition' })
+    .setTimestamp();
+
+  let dmSent = true;
+
+  try {
+    await user.send({
+      embeds: [warningEmbed]
+    });
+  } catch {
+    dmSent = false;
+  }
+
+  const logChannel = await client.channels.fetch(WARNING_LOG_CHANNEL_ID);
+
+  const logEmbed = new EmbedBuilder()
+    .setTitle('⚠️ USER WARNING')
+    .addFields(
+      {
+        name: 'User',
+        value: `${user}`,
+        inline: true
+      },
+      {
+        name: 'Reason',
+        value: reason
+      },
+      {
+        name: 'DM Status',
+        value: dmSent ? '✅ Delivered' : '❌ Could not deliver',
+        inline: true
+      }
+    )
+    .setColor(0xED4245)
+    .setTimestamp();
+
+  await logChannel.send({
+    embeds: [logEmbed]
+  });
+
+  await interaction.reply({
+    content: dmSent
+      ? `✅ Warning sent to ${user}.`
+      : `⚠️ Warning logged, but I could not DM ${user}. Their DMs may be closed.`,
+    ephemeral: true
+  });
+});
 client.once('clientReady', async () => {
-  await client.application.commands.set([changelogCommand]);
+ await client.application.commands.set([changelogCommand, warnCommand]);
 console.log('/changelog command registered');
   console.log(`Discord bot connected as ${client.user.tag}`);
 
