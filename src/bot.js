@@ -43,7 +43,7 @@ async function createDefaultConfig() {
 			{
 				RUNNING: false,
 				serverName: '',
-				botToken: '',
+				botToken: process.env.DISCORD_BOT_TOKEN || '',
 				apiType: 1,
 				apiUrl: '',
 				serverIp: '',
