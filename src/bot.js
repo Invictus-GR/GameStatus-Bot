@@ -65,6 +65,48 @@ async function initializeDatabase() {
     console.error('❌ Failed to initialize daily stats table:', error);
   }
 }
+async function recordDailyServerStats(players, queue) {
+  try {
+    await pool.query(`
+      INSERT INTO daily_stats (
+        report_date,
+        peak_players,
+        player_sum,
+        player_samples,
+        peak_queue,
+        queue_10_reached,
+        queue_20_reached,
+        queue_25_reached,
+        status_checks,
+        updated_at
+      )
+      VALUES (
+        (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London')::date,
+        $1,
+        $1,
+        1,
+        LEAST($2, 25),
+        $2 >= 10,
+        $2 >= 20,
+        $2 >= 25,
+        1,
+        NOW()
+      )
+      ON CONFLICT (report_date) DO UPDATE SET
+        peak_players = GREATEST(daily_stats.peak_players, EXCLUDED.peak_players),
+        player_sum = daily_stats.player_sum + EXCLUDED.player_sum,
+        player_samples = daily_stats.player_samples + 1,
+        peak_queue = GREATEST(daily_stats.peak_queue, EXCLUDED.peak_queue),
+        queue_10_reached = daily_stats.queue_10_reached OR EXCLUDED.queue_10_reached,
+        queue_20_reached = daily_stats.queue_20_reached OR EXCLUDED.queue_20_reached,
+        queue_25_reached = daily_stats.queue_25_reached OR EXCLUDED.queue_25_reached,
+        status_checks = daily_stats.status_checks + 1,
+        updated_at = NOW();
+    `, [players, queue]);
+  } catch (error) {
+    console.error('❌ Failed to record daily server stats:', error);
+  }
+}
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
@@ -287,10 +329,14 @@ async function updateServerStatus() {
     const maxPlayers = Number(playersMatch[2]);
     const queue = queueMatch ? Number(queueMatch[1]) : 0;
 await checkQueueAlerts(queue, players, maxPlayers);
-    const playerDisplay =
-      queue > 0
-        ? `(+${queue}) ${players}/${maxPlayers}`
-        : `${players}/${maxPlayers}`;
+  
+await recordDailyServerStats(players, queue);
+
+const playerDisplay =
+  queue > 0
+    ? `(+${queue}) ${players}/${maxPlayers}`
+    : `${players}/${maxPlayers}`;
+ 
 
     await client.user.setPresence({
       activities: [
