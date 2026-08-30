@@ -604,6 +604,11 @@ async function checkForRemovedMods() {
     // First run: save current list without sending an alert
     if (!previousModSnapshot) {
       previousModSnapshot = currentSnapshot;
+      previousModSnapshot.set('TLC_TEST_MOD', {
+  modId: 'TLC_TEST_MOD',
+  name: 'TLC Mod Removal Test',
+  version: '1.0.0'
+});
       console.log(`Mod removal watcher initialized with ${currentMods.length} mods.`);
       return;
     }
@@ -656,12 +661,8 @@ async function checkForRemovedMods() {
       })
       .setTimestamp();
 
-  await channel.send({
-  content: '@everyone',
-  embeds: [embed],
-  allowedMentions: {
-    parse: ['everyone']
-  }
+ await channel.send({
+  embeds: [embed]
 });
    
 
@@ -780,6 +781,7 @@ console.log('/changelog command registered');
 
   updateServerStatus();
 checkForRemovedMods();
+  setTimeout(checkForRemovedMods, 10000);
   setInterval(updateServerStatus, 120000);
 setInterval(checkForRemovedMods, 300000);
 });
