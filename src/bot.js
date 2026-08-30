@@ -610,7 +610,7 @@ if (isShowMods) {
     mods = await fetchServerMods();
     modsCache.set(interaction.user.id, mods);
   }
-}ds();
+
 
     if (!mods.length) {
       return interaction.reply({
