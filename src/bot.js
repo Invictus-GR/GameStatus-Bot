@@ -80,7 +80,13 @@ function createButton() {
       .setLabel('View Server')
       .setEmoji('🎮')
       .setStyle(ButtonStyle.Link)
-      .setURL(SERVER_URL)
+      .setURL(SERVER_URL),
+
+    new ButtonBuilder()
+      .setCustomId('show_mods')
+      .setLabel('Show Mods')
+      .setEmoji('📦')
+      .setStyle(ButtonStyle.Secondary)
   );
 }
 async function checkQueueAlerts(queue, players, maxPlayers) {
@@ -92,7 +98,7 @@ async function checkQueueAlerts(queue, players, maxPlayers) {
 
   const alerts = messages.filter(message =>
     message.author.id === client.user.id &&
-    message.embeds?.[0]?.footer?.text === 'TLC Command • Live Server Alert'
+   message.embeds?.[0]?.footer?.text === 'TLC Command • Created by MSgt_Invictus_GR for TLC'
   );
 
   const previousAlert = alerts.first();
@@ -172,7 +178,9 @@ for (const [, message] of alerts) {
     .setColor(color)
 .setImage('https://raw.githubusercontent.com/Invictus-GR/GameStatus-Bot/main/TLC-queue-banner.png')
 
-    .setFooter({ text: 'TLC Command • Live Server Alert' })
+   .setFooter({
+  text: 'TLC Command • Created by MSgt_Invictus_GR for TLC'
+})
     .setTimestamp();
 
   // Delete previous queue alert
@@ -248,7 +256,7 @@ await checkQueueAlerts(queue, players, maxPlayers);
     });
 
     const embed = new EmbedBuilder()
-      .setTitle('⚔️ TLC Ultra Hardcore')
+      .setTitle('EU | TLC | THE LAST COALITION | UHC | PVP | PERSISTENT RANK | DRONES')
       .setDescription('### 🟢 SERVER ONLINE')
       .addFields(
         {
@@ -304,7 +312,7 @@ await checkQueueAlerts(queue, players, maxPlayers);
       });
 
       const embed = new EmbedBuilder()
-        .setTitle('⚔️ TLC Ultra Hardcore')
+      .setTitle('EU | TLC | THE LAST COALITION | UHC | PVP | PERSISTENT RANK | DRONES')
         .setDescription('### 🔴 SERVER OFFLINE')
         .addFields({
           name: '📡 Status',
@@ -312,9 +320,10 @@ await checkQueueAlerts(queue, players, maxPlayers);
           inline: true
         })
         .setColor(0xED4245)
-        .setFooter({
-          text: 'TLC Server Status • Auto-update every 2 minutes'
-        })
+        
+ .setFooter({
+  text: 'TLC Command • Created by MSgt_Invictus_GR for TLC'
+})
         .setTimestamp();
 
       if (guildIcon) {
@@ -540,6 +549,15 @@ client.on('interactionCreate', async interaction => {
     content: dmSent
       ? `✅ Warning sent to ${user}.`
       : `⚠️ Warning logged, but I could not DM ${user}. Their DMs may be closed.`,
+    ephemeral: true
+  });
+});
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isButton()) return;
+  if (interaction.customId !== 'show_mods') return;
+
+  await interaction.reply({
+    content: '📦 Show Mods button is working!',
     ephemeral: true
   });
 });
