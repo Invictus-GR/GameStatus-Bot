@@ -566,7 +566,7 @@ async function fetchServerMods() {
   const html = await response.text();
 
   const modRegex =
-    /\{\\"name\\":\\"(.*?)\\",\\"modId\\":\\"(.*?)\\",\\"version\\":\\"(.*?)\\"\}/g;
+   /\{\\"name\\":\\"([^"\\]*)\\",\\"modId\\":\\"([^"\\]*)\\",\\"version\\":\\"([^"\\]*)\\"\}/g;
 
   const mods = [];
   let match;
