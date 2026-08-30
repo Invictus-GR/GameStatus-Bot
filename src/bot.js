@@ -588,7 +588,7 @@ async function fetchServerMods() {
   );
 }
 const MODS_PER_PAGE = 20;
-
+const modsCache = new Map();
 client.on('interactionCreate', async interaction => {
   if (!interaction.isButton()) return;
 
@@ -598,7 +598,19 @@ client.on('interactionCreate', async interaction => {
   if (!isShowMods && !isModsPage) return;
 
   try {
-    const mods = await fetchServerMods();
+   let mods;
+
+if (isShowMods) {
+  mods = await fetchServerMods();
+  modsCache.set(interaction.user.id, mods);
+} else {
+  mods = modsCache.get(interaction.user.id);
+
+  if (!mods) {
+    mods = await fetchServerMods();
+    modsCache.set(interaction.user.id, mods);
+  }
+}ds();
 
     if (!mods.length) {
       return interaction.reply({
