@@ -140,6 +140,30 @@ async function recordDailyModRemoval(removedCount, activeMods) {
     console.error('❌ Failed to record daily mod removal:', error);
   }
 }
+async function recordDailyModCheck(activeMods) {
+  try {
+    await pool.query(`
+      INSERT INTO daily_stats (
+        report_date,
+        active_mods,
+        mod_checks,
+        updated_at
+      )
+      VALUES (
+        (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London')::date,
+        $1,
+        1,
+        NOW()
+      )
+      ON CONFLICT (report_date) DO UPDATE SET
+        active_mods = EXCLUDED.active_mods,
+        mod_checks = daily_stats.mod_checks + 1,
+        updated_at = NOW();
+    `, [activeMods]);
+  } catch (error) {
+    console.error('❌ Failed to record daily mod check:', error);
+  }
+}
 async function recordServerHealth(isOnline) {
 let db;
 
@@ -853,7 +877,7 @@ async function checkForRemovedMods() {
       console.log('Mod removal check skipped: no mods found.');
       return;
     }
-
+await recordDailyModCheck(currentMods.length);
     const currentSnapshot = new Map(
       currentMods.map(mod => [mod.modId, mod])
     );
