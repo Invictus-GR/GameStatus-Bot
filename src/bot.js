@@ -272,7 +272,7 @@ await checkQueueAlerts(queue, players, maxPlayers);
       )
       .setColor(0x57F287)
       .setFooter({
-        text: 'TLC Server Status • Auto-update every 2 minutes'
+       text: 'TLC Command • Created by MSgt_Invictus_GR for TLC'
       })
       .setTimestamp();
 
