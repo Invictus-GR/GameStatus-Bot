@@ -27,6 +27,7 @@ const WARNING_LOG_CHANNEL_ID = '1540989189380640858';
 const GENERAL_CHANNEL_ID = '1529549362563125271';
 const MOD_REMOVALS_CHANNEL_ID = '1543567256024252496';
 let previousModSnapshot = null;
+let pendingRemovedMods = new Map();
 const changelogCommand = new SlashCommandBuilder()
   .setName('changelog')
   .setDescription('Create a TLC server changelog');
@@ -609,13 +610,25 @@ async function checkForRemovedMods() {
       return;
     }
 
-    const removedMods = [];
+   const removedMods = [];
 
-    for (const [modId, mod] of previousModSnapshot) {
-      if (!currentSnapshot.has(modId)) {
-        removedMods.push(mod);
-      }
-    }
+// Confirm mods that were already missing on the previous check
+for (const [modId, mod] of pendingRemovedMods) {
+  if (!currentSnapshot.has(modId)) {
+    removedMods.push(mod);
+    pendingRemovedMods.delete(modId);
+  } else {
+    // Mod appeared again, cancel the pending removal
+    pendingRemovedMods.delete(modId);
+  }
+}
+
+// Detect newly missing mods and wait for confirmation
+for (const [modId, mod] of previousModSnapshot) {
+  if (!currentSnapshot.has(modId) && !pendingRemovedMods.has(modId)) {
+    pendingRemovedMods.set(modId, mod);
+  }
+}
 
     // Always update the snapshot
     previousModSnapshot = currentSnapshot;
