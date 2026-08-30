@@ -13,7 +13,19 @@ TextInputStyle,
 } from 'discord.js';
 
 import fetch from 'node-fetch';
-
+import pg from 'pg';
+const { Pool } = pg;
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL
+});
+async function testDatabaseConnection() {
+  try {
+    await pool.query('SELECT NOW()');
+    console.log('✅ PostgreSQL connected successfully.');
+  } catch (error) {
+    console.error('❌ PostgreSQL connection failed:', error);
+  }
+}
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
@@ -786,6 +798,7 @@ if (isShowMods) {
   }
 });
 client.once('clientReady', async () => {
+  await testDatabaseConnection();
   await client.application.commands.set([]);
 
   const guild = client.guilds.cache.first();
