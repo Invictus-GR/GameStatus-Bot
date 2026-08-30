@@ -13,6 +13,7 @@ TextInputStyle,
 } from 'discord.js';
 
 import fetch from 'node-fetch';
+import cron from 'node-cron';
 import pg from 'pg';
 const { Pool } = pg;
 const pool = new Pool({
@@ -280,6 +281,105 @@ let db;
     db.release();
   }
 }
+}
+function formatDuration(totalSeconds) {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+  return `${hours}h ${minutes}m`;
+}
+async function sendDailyReport() {
+  try {
+    const result = await pool.query(`
+      SELECT *
+      FROM daily_stats
+      WHERE report_date =
+        (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London')::date - 1
+    `);
+
+    if (result.rows.length === 0) {
+      console.log('No daily stats found for yesterday.');
+      return;
+    }
+
+    const stats = result.rows[0];
+
+    const averagePlayers = Number(stats.player_samples) > 0
+      ? Math.round(Number(stats.player_sum) / Number(stats.player_samples))
+      : 0;
+
+    const uptimeSeconds = Number(stats.uptime_seconds);
+    const downtimeSeconds = Number(stats.downtime_seconds);
+    const totalTrackedSeconds = uptimeSeconds + downtimeSeconds;
+
+    const uptimeRate = totalTrackedSeconds > 0
+      ? ((uptimeSeconds / totalTrackedSeconds) * 100).toFixed(1)
+      : '0.0';
+
+    const channel = await client.channels.fetch(ADMIN_REPORT_CHANNEL_ID);
+
+    if (!channel || !channel.isTextBased()) {
+      console.error('Admin report channel not found.');
+      return;
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle('📊 TLC DAILY OPERATIONS REPORT')
+      .addFields(
+        {
+          name: '👥 PLAYER ACTIVITY',
+          value:
+            `Peak Players: **${stats.peak_players}/128**\n` +
+            `Average Players: **${averagePlayers}**\n` +
+            `Peak Queue: **${stats.peak_queue}/25**`,
+          inline: false
+        },
+        {
+          name: '🚨 QUEUE ACTIVITY',
+          value:
+            `10+ Reached: ${stats.queue_10_reached ? '✅' : '❌'}\n` +
+            `20+ Reached: ${stats.queue_20_reached ? '✅' : '❌'}\n` +
+            `25/25 Reached: ${stats.queue_25_reached ? '✅' : '❌'}`,
+          inline: true
+        },
+        {
+          name: '🖥️ SERVER HEALTH',
+          value:
+            `Uptime: **${formatDuration(uptimeSeconds)}**\n` +
+            `Downtime: **${formatDuration(downtimeSeconds)}**\n` +
+            `Uptime Rate: **${uptimeRate}%**\n` +
+            `Offline Incidents: **${stats.offline_events}**`,
+          inline: true
+        },
+        {
+          name: '📦 MODS',
+          value:
+            `Active Mods: **${stats.active_mods}**\n` +
+            `Removed: **${stats.mods_removed_count}**`,
+          inline: true
+        },
+        {
+          name: '🤖 MONITORING',
+          value:
+            `Server Checks: **${stats.status_checks}**\n` +
+            `Mod Checks: **${stats.mod_checks}**`,
+          inline: true
+        }
+      )
+      .setColor(0x5865F2)
+      .setFooter({
+        text: 'TLC Command • Created by MSgt_Invictus_GR for TLC'
+      })
+      .setTimestamp();
+
+    await channel.send({
+      embeds: [embed]
+    });
+
+    console.log('✅ Daily operations report sent.');
+  } catch (error) {
+    console.error('❌ Failed to send daily report:', error);
+  }
 }
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
@@ -1067,6 +1167,13 @@ if (isShowMods) {
 client.once('clientReady', async () => {
   await testDatabaseConnection();
   await initializeDatabase();
+
+  cron.schedule('5 0 * * *', async () => {
+    await sendDailyReport();
+  }, {
+    timezone: 'Europe/London'
+  });
+  
   await client.application.commands.set([]);
 
   const guild = client.guilds.cache.first();
