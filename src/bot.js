@@ -611,7 +611,7 @@ if (isShowMods) {
     modsCache.set(interaction.user.id, mods);
   }
 
-
+}
     if (!mods.length) {
       return interaction.reply({
         content: '❌ Could not find the server mod list.',
