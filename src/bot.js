@@ -26,6 +26,7 @@ const CHANGELOG_CHANNEL_ID = '1535567655442972722';
 const WARNING_LOG_CHANNEL_ID = '1540989189380640858';
 const GENERAL_CHANNEL_ID = '1529549362563125271';
 const MOD_REMOVALS_CHANNEL_ID = '1543567256024252496';
+const ADMIN_REPORT_CHANNEL_ID = '1530535429491916810';
 let previousModSnapshot = null;
 let pendingRemovedMods = new Map();
 const changelogCommand = new SlashCommandBuilder()
