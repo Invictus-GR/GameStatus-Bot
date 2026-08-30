@@ -108,6 +108,30 @@ async function recordDailyServerStats(players, queue) {
     console.error('❌ Failed to record daily server stats:', error);
   }
 }
+async function recordDailyModRemoval(removedCount, activeMods) {
+  try {
+    await pool.query(`
+      INSERT INTO daily_stats (
+        report_date,
+        active_mods,
+        mods_removed_count,
+        updated_at
+      )
+      VALUES (
+        (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London')::date,
+        $1,
+        $2,
+        NOW()
+      )
+      ON CONFLICT (report_date) DO UPDATE SET
+        active_mods = EXCLUDED.active_mods,
+        mods_removed_count = daily_stats.mods_removed_count + EXCLUDED.mods_removed_count,
+        updated_at = NOW();
+    `, [activeMods, removedCount]);
+  } catch (error) {
+    console.error('❌ Failed to record daily mod removal:', error);
+  }
+}
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
@@ -777,7 +801,7 @@ await channel.send({
   }
 });
    
-
+await recordDailyModRemoval(removedMods.length, currentMods.length);
     console.log(`Mod removal alert sent for ${removedMods.length} mod(s).`);
 
   } catch (error) {
