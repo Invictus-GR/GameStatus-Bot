@@ -19,11 +19,50 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL
 });
 async function testDatabaseConnection() {
+
   try {
     await pool.query('SELECT NOW()');
     console.log('✅ PostgreSQL connected successfully.');
   } catch (error) {
     console.error('❌ PostgreSQL connection failed:', error);
+  }
+}
+async function initializeDatabase() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS daily_stats (
+        report_date DATE PRIMARY KEY,
+        peak_players INTEGER NOT NULL DEFAULT 0,
+        player_sum BIGINT NOT NULL DEFAULT 0,
+        player_samples INTEGER NOT NULL DEFAULT 0,
+        peak_queue INTEGER NOT NULL DEFAULT 0,
+
+        uptime_seconds BIGINT NOT NULL DEFAULT 0,
+        downtime_seconds BIGINT NOT NULL DEFAULT 0,
+        offline_events INTEGER NOT NULL DEFAULT 0,
+
+        queue_10_reached BOOLEAN NOT NULL DEFAULT FALSE,
+        queue_20_reached BOOLEAN NOT NULL DEFAULT FALSE,
+        queue_25_reached BOOLEAN NOT NULL DEFAULT FALSE,
+
+        active_mods INTEGER NOT NULL DEFAULT 0,
+        mods_removed_count INTEGER NOT NULL DEFAULT 0,
+
+        warnings_count INTEGER NOT NULL DEFAULT 0,
+        changelogs_count INTEGER NOT NULL DEFAULT 0,
+
+        status_checks INTEGER NOT NULL DEFAULT 0,
+        mod_checks INTEGER NOT NULL DEFAULT 0,
+        bot_errors INTEGER NOT NULL DEFAULT 0,
+
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    console.log('✅ Daily stats table ready.');
+  } catch (error) {
+    console.error('❌ Failed to initialize daily stats table:', error);
   }
 }
 const client = new Client({
@@ -799,6 +838,7 @@ if (isShowMods) {
 });
 client.once('clientReady', async () => {
   await testDatabaseConnection();
+  await initializeDatabase();
   await client.application.commands.set([]);
 
   const guild = client.guilds.cache.first();
