@@ -80,18 +80,19 @@ async function recordDailyServerStats(players, queue) {
         status_checks,
         updated_at
       )
-      VALUES (
-        (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London')::date,
-        $1,
-        $1,
-        1,
-        LEAST($2, 25),
-        $2 >= 10,
-        $2 >= 20,
-        $2 >= 25,
-        1,
-        NOW()
-      )
+    VALUES (
+  (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London')::date,
+  $1,
+  $2,
+  1,
+  LEAST($3, 25),
+  $3 >= 10,
+  $3 >= 20,
+  $3 >= 25,
+  1,
+  NOW()
+)
+      
       ON CONFLICT (report_date) DO UPDATE SET
         peak_players = GREATEST(daily_stats.peak_players, EXCLUDED.peak_players),
         player_sum = daily_stats.player_sum + EXCLUDED.player_sum,
@@ -102,7 +103,7 @@ async function recordDailyServerStats(players, queue) {
         queue_25_reached = daily_stats.queue_25_reached OR EXCLUDED.queue_25_reached,
         status_checks = daily_stats.status_checks + 1,
         updated_at = NOW();
-    `, [players, queue]);
+   `, [players, players, queue]);
   } catch (error) {
     console.error('❌ Failed to record daily server stats:', error);
   }
