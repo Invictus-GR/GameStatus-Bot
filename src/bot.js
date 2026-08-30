@@ -20,7 +20,7 @@ const client = new Client({
 
 const SERVER_URL =
   'https://www.armahq.com/servers/1d8007f8-bc4d-45a6-86db-f1091aed4300';
-
+const SERVER_NAME = 'EU | TLC | THE LAST COALITION | UHC | PVP | PERSISTENT RANK | DRONES';
 const CHANNEL_ID = '1543309765243834428';
 const CHANGELOG_CHANNEL_ID = '1535567655442972722';
 const WARNING_LOG_CHANNEL_ID = '1540989189380640858';
@@ -552,14 +552,127 @@ client.on('interactionCreate', async interaction => {
     ephemeral: true
   });
 });
+async function fetchServerMods() {
+  const response = await fetch(SERVER_URL, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`ArmaHQ returned HTTP ${response.status}`);
+  }
+
+  const html = await response.text();
+
+  const modRegex =
+    /\{\\"name\\":\\"(.*?)\\",\\"modId\\":\\"(.*?)\\",\\"version\\":\\"(.*?)\\"\}/g;
+
+  const mods = [];
+  let match;
+
+  while ((match = modRegex.exec(html)) !== null) {
+    mods.push({
+      name: match[1],
+      modId: match[2],
+      version: match[3]
+    });
+  }
+
+  const uniqueMods = [
+    ...new Map(mods.map(mod => [mod.modId, mod])).values()
+  ];
+
+  return uniqueMods.sort((a, b) =>
+    a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })
+  );
+}
+const MODS_PER_PAGE = 20;
+
 client.on('interactionCreate', async interaction => {
   if (!interaction.isButton()) return;
-  if (interaction.customId !== 'show_mods') return;
 
-  await interaction.reply({
-    content: '📦 Show Mods button is working!',
-    ephemeral: true
-  });
+  const isShowMods = interaction.customId === 'show_mods';
+  const isModsPage = interaction.customId.startsWith('mods_page_');
+
+  if (!isShowMods && !isModsPage) return;
+
+  try {
+    const mods = await fetchServerMods();
+
+    if (!mods.length) {
+      return interaction.reply({
+        content: '❌ Could not find the server mod list.',
+        ephemeral: true
+      });
+    }
+
+    let page = 0;
+
+    if (isModsPage) {
+      page = Number(interaction.customId.replace('mods_page_', ''));
+    }
+
+    const totalPages = Math.ceil(mods.length / MODS_PER_PAGE);
+
+    page = Math.max(0, Math.min(page, totalPages - 1));
+
+    const start = page * MODS_PER_PAGE;
+    const pageMods = mods.slice(start, start + MODS_PER_PAGE);
+
+    const description = pageMods
+      .map((mod, index) =>
+        `**${start + index + 1}. ${mod.name}**\nVersion: \`${mod.version}\``
+      )
+      .join('\n\n');
+
+    const embed = new EmbedBuilder()
+      .setTitle('📦 TLC SERVER MODS')
+      .setDescription(description)
+      .setColor(0x5865F2)
+      .setFooter({
+        text: `${mods.length} Mods • Page ${page + 1}/${totalPages} • TLC Command`
+      });
+
+    const buttons = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`mods_page_${page - 1}`)
+        .setLabel('Previous')
+        .setEmoji('◀️')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(page === 0),
+
+      new ButtonBuilder()
+        .setCustomId(`mods_page_${page + 1}`)
+        .setLabel('Next')
+        .setEmoji('▶️')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(page === totalPages - 1)
+    );
+
+    if (isShowMods) {
+      await interaction.reply({
+        embeds: [embed],
+        components: [buttons],
+        ephemeral: true
+      });
+    } else {
+      await interaction.update({
+        embeds: [embed],
+        components: [buttons]
+      });
+    }
+
+  } catch (error) {
+    console.error('Show Mods error:', error);
+
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({
+        content: '❌ Failed to load the server mod list. Please try again.',
+        ephemeral: true
+      });
+    }
+  }
 });
 client.once('clientReady', async () => {
   await client.application.commands.set([]);
