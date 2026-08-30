@@ -294,7 +294,7 @@ async function sendDailyReport() {
       SELECT *
       FROM daily_stats
       WHERE report_date =
-        (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London')::date
+        (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London')::date - 1
     `);
 
     if (result.rows.length === 0) {
@@ -1167,7 +1167,7 @@ if (isShowMods) {
 client.once('clientReady', async () => {
 await testDatabaseConnection();
 await initializeDatabase();
-await sendDailyReport();
+
 
 cron.schedule('5 0 * * *', async () => {
   await sendDailyReport();
