@@ -656,9 +656,14 @@ async function checkForRemovedMods() {
       })
       .setTimestamp();
 
-    await channel.send({
-      embeds: [embed]
-    });
+  await channel.send({
+  content: '@everyone',
+  embeds: [embed],
+  allowedMentions: {
+    parse: ['everyone']
+  }
+});
+   
 
     console.log(`Mod removal alert sent for ${removedMods.length} mod(s).`);
 
