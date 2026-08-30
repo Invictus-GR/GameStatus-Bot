@@ -59,7 +59,15 @@ async function initializeDatabase() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS server_health_state (
+    id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    is_online BOOLEAN,
+    last_checked_at TIMESTAMPTZ,
+    last_changed_at TIMESTAMPTZ,
+    offline_started_at TIMESTAMPTZ
+  );
+`);
     console.log('✅ Daily stats table ready.');
   } catch (error) {
     console.error('❌ Failed to initialize daily stats table:', error);
@@ -132,6 +140,123 @@ async function recordDailyModRemoval(removedCount, activeMods) {
     console.error('❌ Failed to record daily mod removal:', error);
   }
 }
+async function recordServerHealth(isOnline) {
+let db;
+
+  try {
+    db = await pool.connect();
+    await db.query('BEGIN');
+
+    const stateResult = await db.query(`
+      SELECT *
+      FROM server_health_state
+      WHERE id = 1
+      FOR UPDATE
+    `);
+
+    // First ever health check
+    if (stateResult.rows.length === 0) {
+      await db.query(`
+        INSERT INTO server_health_state (
+          id,
+          is_online,
+          last_checked_at,
+          last_changed_at,
+          offline_started_at
+        )
+        VALUES (
+          1,
+          $1::boolean,
+          NOW(),
+          NOW(),
+          CASE WHEN $1::boolean = FALSE THEN NOW() ELSE NULL END
+        )
+      `, [isOnline]);
+
+      await db.query('COMMIT');
+      return;
+    }
+
+    const previousState = stateResult.rows[0];
+
+    const lastChecked = previousState.last_checked_at
+      ? new Date(previousState.last_checked_at).getTime()
+      : Date.now();
+
+    const elapsedSeconds = Math.max(
+      0,
+      Math.floor((Date.now() - lastChecked) / 1000)
+    );
+
+    let uptimeSeconds = 0;
+    let downtimeSeconds = 0;
+    let offlineEvents = 0;
+
+    if (previousState.is_online === true && isOnline === false) {
+      downtimeSeconds = elapsedSeconds;
+      offlineEvents = 1;
+    } else if (previousState.is_online === true) {
+      uptimeSeconds = elapsedSeconds;
+    } else if (previousState.is_online === false) {
+      downtimeSeconds = elapsedSeconds;
+    }
+
+    await db.query(`
+      INSERT INTO daily_stats (
+        report_date,
+        uptime_seconds,
+        downtime_seconds,
+        offline_events,
+        updated_at
+      )
+      VALUES (
+        (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London')::date,
+        $1::bigint,
+        $2::bigint,
+        $3::integer,
+        NOW()
+      )
+      ON CONFLICT (report_date) DO UPDATE SET
+        uptime_seconds = daily_stats.uptime_seconds + EXCLUDED.uptime_seconds,
+        downtime_seconds = daily_stats.downtime_seconds + EXCLUDED.downtime_seconds,
+        offline_events = daily_stats.offline_events + EXCLUDED.offline_events,
+        updated_at = NOW();
+    `, [uptimeSeconds, downtimeSeconds, offlineEvents]);
+
+    await db.query(`
+      UPDATE server_health_state
+      SET
+        is_online = $1::boolean,
+        last_checked_at = NOW(),
+        last_changed_at =
+          CASE
+            WHEN is_online IS DISTINCT FROM $1::boolean THEN NOW()
+            ELSE last_changed_at
+          END,
+        offline_started_at =
+          CASE
+            WHEN $1::boolean = FALSE
+              AND is_online IS DISTINCT FROM FALSE
+              THEN COALESCE(last_checked_at, NOW())
+            WHEN $1::boolean = TRUE THEN NULL
+            ELSE offline_started_at
+          END
+      WHERE id = 1
+    `, [isOnline]);
+
+    await db.query('COMMIT');
+
+ } catch (error) {
+  if (db) {
+    await db.query('ROLLBACK').catch(() => {});
+  }
+  console.error('❌ Failed to record server health:', error);
+} finally {
+  if (db) {
+    db.release();
+  }
+}
+}
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
@@ -147,6 +272,7 @@ const MOD_REMOVALS_CHANNEL_ID = '1543567256024252496';
 const ADMIN_REPORT_CHANNEL_ID = '1530535429491916810';
 let previousModSnapshot = null;
 let pendingRemovedMods = new Map();
+let consecutiveStatusFailures = 0;
 const changelogCommand = new SlashCommandBuilder()
   .setName('changelog')
   .setDescription('Create a TLC server changelog');
@@ -412,12 +538,19 @@ const playerDisplay =
       embeds: [embed],
       components: [createButton()]
     });
-
+    consecutiveStatusFailures = 0;
+await recordServerHealth(true);
     console.log(`Status updated: 🟢 ONLINE | ${playerDisplay}`);
 
   } catch (error) {
     console.error('Server status error:', error.message);
-
+consecutiveStatusFailures += 1;
+    if (consecutiveStatusFailures >= 2) {
+  await recordServerHealth(false);
+}
+    if (consecutiveStatusFailures < 2) {
+  return;
+}
     await client.user.setPresence({
       activities: [
         {
