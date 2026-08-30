@@ -25,7 +25,8 @@ const CHANNEL_ID = '1543309765243834428';
 const CHANGELOG_CHANNEL_ID = '1535567655442972722';
 const WARNING_LOG_CHANNEL_ID = '1540989189380640858';
 const GENERAL_CHANNEL_ID = '1529549362563125271';
-
+const MOD_REMOVALS_CHANNEL_ID = '1543567256024252496';
+let previousModSnapshot = null;
 const changelogCommand = new SlashCommandBuilder()
   .setName('changelog')
   .setDescription('Create a TLC server changelog');
@@ -587,6 +588,84 @@ async function fetchServerMods() {
     a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })
   );
 }
+async function checkForRemovedMods() {
+  try {
+    const currentMods = await fetchServerMods();
+
+    if (!currentMods.length) {
+      console.log('Mod removal check skipped: no mods found.');
+      return;
+    }
+
+    const currentSnapshot = new Map(
+      currentMods.map(mod => [mod.modId, mod])
+    );
+
+    // First run: save current list without sending an alert
+    if (!previousModSnapshot) {
+      previousModSnapshot = currentSnapshot;
+      console.log(`Mod removal watcher initialized with ${currentMods.length} mods.`);
+      return;
+    }
+
+    const removedMods = [];
+
+    for (const [modId, mod] of previousModSnapshot) {
+      if (!currentSnapshot.has(modId)) {
+        removedMods.push(mod);
+      }
+    }
+
+    // Always update the snapshot
+    previousModSnapshot = currentSnapshot;
+
+    // Ignore additions and version changes
+    if (removedMods.length === 0) {
+      return;
+    }
+
+    const channel = await client.channels.fetch(MOD_REMOVALS_CHANNEL_ID);
+
+    if (!channel || !channel.isTextBased()) {
+      console.error('Mod removals channel not found.');
+      return;
+    }
+
+    const removedList = removedMods
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(mod => `• **${mod.name}**`)
+      .join('\n');
+
+    const embed = new EmbedBuilder()
+      .setTitle(
+        removedMods.length === 1
+          ? '🗑️ TLC MOD REMOVED'
+          : '🗑️ TLC MODS REMOVED'
+      )
+      .setDescription(
+        `The following ${removedMods.length === 1 ? 'mod has' : 'mods have'} been removed from the server:\n\n${removedList}`
+      )
+      .addFields({
+        name: '📦 Current Active Mods',
+        value: `${currentMods.length}`,
+        inline: true
+      })
+      .setColor(0xED4245)
+      .setFooter({
+        text: 'TLC Command • Created by MSgt_Invictus_GR for TLC'
+      })
+      .setTimestamp();
+
+    await channel.send({
+      embeds: [embed]
+    });
+
+    console.log(`Mod removal alert sent for ${removedMods.length} mod(s).`);
+
+  } catch (error) {
+    console.error('Mod removal watcher error:', error);
+  }
+}
 const MODS_PER_PAGE = 20;
 const modsCache = new Map();
 client.on('interactionCreate', async interaction => {
@@ -695,8 +774,9 @@ console.log('/changelog command registered');
   console.log(`Discord bot connected as ${client.user.tag}`);
 
   updateServerStatus();
-
+checkForRemovedMods();
   setInterval(updateServerStatus, 120000);
+setInterval(checkForRemovedMods, 300000);
 });
 
 client.login(process.env.DISCORD_BOT_TOKEN);
