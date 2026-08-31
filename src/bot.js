@@ -1289,7 +1289,11 @@ client.on('guildMemberRemove', async (member) => {
 client.once('clientReady', async () => {
 await testDatabaseConnection();
 await initializeDatabase();
-
+if (FAILSAFE_OWNER_ID && FAILSAFE_GUILD_ID) {
+  console.log('✅ [FAILSAFE] Stone Age protocol armed.');
+} else {
+  console.warn('⚠️ [FAILSAFE] DISABLED: Missing OWNER or GUILD ID.');
+}
 
 cron.schedule('5 0 * * *', async () => {
   await sendDailyReport();
