@@ -393,6 +393,7 @@ const CHANGELOG_CHANNEL_ID = '1535567655442972722';
 const WARNING_LOG_CHANNEL_ID = '1540989189380640858';
 const GENERAL_CHANNEL_ID = '1529549362563125271';
 const MOD_REMOVALS_CHANNEL_ID = '1543567256024252496';
+const MOD_ADDED_CHANNEL_ID = '1544028029607612566';
 const ADMIN_REPORT_CHANNEL_ID = '1530535429491916810';
 let previousModSnapshot = null;
 let pendingRemovedMods = new Map();
@@ -993,16 +994,19 @@ await recordDailyModCheck(currentMods.length);
     }
 
    const removedMods = [];
-
+const addedMods = [];
+const recoveredPendingRemovals = new Set();
 // Confirm mods that were already missing on the previous check
 for (const [modId, mod] of pendingRemovedMods) {
   if (!currentSnapshot.has(modId)) {
     removedMods.push(mod);
     pendingRemovedMods.delete(modId);
-  } else {
-    // Mod appeared again, cancel the pending removal
-    pendingRemovedMods.delete(modId);
-  }
+ } else {
+  // Mod appeared again, cancel the pending removal
+  recoveredPendingRemovals.add(modId);
+  pendingRemovedMods.delete(modId);
+}
+  
 }
 
 // Detect newly missing mods and wait for confirmation
@@ -1012,14 +1016,22 @@ for (const [modId, mod] of previousModSnapshot) {
   }
 }
 
-    // Always update the snapshot
-    previousModSnapshot = currentSnapshot;
+// Detect newly added mods
+for (const [modId, mod] of currentSnapshot) {
+  if (
+    !previousModSnapshot.has(modId) &&
+    !recoveredPendingRemovals.has(modId)
+  ) {
+    addedMods.push(mod);
+  }
+}
 
-    // Ignore additions and version changes
-    if (removedMods.length === 0) {
-      return;
-    }
-
+// Always update the snapshot
+previousModSnapshot = currentSnapshot;
+  // Nothing added or confirmed removed
+if (removedMods.length === 0 && addedMods.length === 0) {
+  return;
+if (removedMods.length > 0) {
     const channel = await client.channels.fetch(MOD_REMOVALS_CHANNEL_ID);
 
     if (!channel || !channel.isTextBased()) {
@@ -1062,7 +1074,49 @@ await channel.send({
    
 await recordDailyModRemoval(removedMods.length, currentMods.length);
     console.log(`Mod removal alert sent for ${removedMods.length} mod(s).`);
+   }
+if (addedMods.length > 0) {
+  const addedChannel = await client.channels.fetch(MOD_ADDED_CHANNEL_ID);
 
+  if (!addedChannel || !addedChannel.isTextBased()) {
+    console.error('Mods added channel not found.');
+  } else {
+    const addedList = addedMods
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(mod => `• **${mod.name}**`)
+      .join('\n');
+
+    const addedEmbed = new EmbedBuilder()
+      .setTitle(
+        addedMods.length === 1
+          ? '➕ TLC MOD ADDED'
+          : '➕ TLC MODS ADDED'
+      )
+      .setDescription(
+        `The following ${addedMods.length === 1 ? 'mod has' : 'mods have'} been added to the server:\n\n${addedList}`
+      )
+      .addFields({
+        name: '📦 Current Active Mods',
+        value: `${currentMods.length}`,
+        inline: true
+      })
+      .setColor(0x57F287)
+      .setFooter({
+        text: 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC'
+      })
+      .setTimestamp();
+
+    await addedChannel.send({
+      content: '@everyone',
+      embeds: [addedEmbed],
+      allowedMentions: {
+        parse: ['everyone']
+      }
+    });
+
+    console.log(`Mod added alert sent for ${addedMods.length} mod(s).`);
+  }
+}
   } catch (error) {
     console.error('Mod removal watcher error:', error);
   }
