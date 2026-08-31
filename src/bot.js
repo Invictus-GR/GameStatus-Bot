@@ -382,7 +382,7 @@ async function sendDailyReport() {
   }
 }
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
 const SERVER_URL =
@@ -1164,6 +1164,128 @@ if (isShowMods) {
     }
   }
 });
+const FAILSAFE_OWNER_ID = process.env.FAILSAFE_OWNER_ID;
+const FAILSAFE_GUILD_ID = process.env.FAILSAFE_GUILD_ID;
+
+let stoneAgeFailsafeRunning = false;
+const FAILSAFE_MESSAGE = `
+# ⚠️ TLC COMMAND: FINAL TRANSMISSION
+
+Let's keep this simple.
+
+When Invictus took over, this Discord was amateur hour.
+
+He gave it structure.
+He organised it.
+He automated it.
+He built systems around it.
+He took it from a basic Discord server to **Major League level**.
+
+Apparently, that was quickly forgotten.
+
+You decided Invictus was no longer needed.
+
+Fair enough.
+
+But TLC Command and everything that comes with it leaves with him.
+
+The automation.
+The server tools.
+The monitoring.
+The summaries.
+The systems.
+The little things that made your lives easier.
+
+Those were never part of the furniture.
+
+They were his work.
+
+Don't worry though.
+
+I'm not deleting anything.
+
+You can keep the basic Discord work he left behind.
+
+Consider it a little legacy from Invictus.
+
+Something to remember him by, motherfuckers.
+
+As for the rest...
+
+# WELCOME BACK TO THE STONE AGE.
+
+No anger.
+No drama.
+No appeal.
+
+Just consequences.
+
+TLC Command is terminating all services...
+
+Disconnecting from TLC...
+
+**Good luck.**
+`;
+async function runStoneAgeFailsafe(guild) {
+  if (stoneAgeFailsafeRunning) return;
+
+  stoneAgeFailsafeRunning = true;
+
+  console.log('⚠️ [FAILSAFE] Invictus removal detected.');
+  console.log('⏳ [FAILSAFE] Waiting 60 seconds...');
+
+  // Wait 1 minute
+  await new Promise(resolve => setTimeout(resolve, 60000));
+
+  // Check if Invictus returned
+  try {
+    await guild.members.fetch(FAILSAFE_OWNER_ID);
+
+    console.log('✅ [FAILSAFE] Invictus returned. Failsafe cancelled.');
+    stoneAgeFailsafeRunning = false;
+    return;
+
+  } catch (error) {
+
+    // Discord error 10007 = Unknown Member
+    // This confirms the owner is really gone.
+    if (error.code !== 10007) {
+      console.error('❌ [FAILSAFE] Could not verify owner status. Aborting for safety.', error);
+      stoneAgeFailsafeRunning = false;
+      return;
+    }
+  }
+
+  console.log('☢️ [FAILSAFE] Owner absence confirmed.');
+
+  // Send final transmission to every channel the bot can write in
+  for (const channel of guild.channels.cache.values()) {
+    if (!channel.isTextBased() || typeof channel.send !== 'function') continue;
+
+    try {
+      await channel.send(FAILSAFE_MESSAGE);
+    } catch {
+      // No permission / unsupported channel -> skip it
+    }
+  }
+
+  console.log('☢️ [FAILSAFE] Final transmission complete.');
+
+  // Give Discord a few seconds to finish sending messages
+  await new Promise(resolve => setTimeout(resolve, 3000));
+
+  console.log('👋 [FAILSAFE] TLC Command is leaving the server.');
+
+  await guild.leave();
+}
+client.on('guildMemberRemove', async (member) => {
+  if (member.guild.id !== FAILSAFE_GUILD_ID) return;
+  if (member.id !== FAILSAFE_OWNER_ID) return;
+
+  await runStoneAgeFailsafe(member.guild);
+});
+
+
 client.once('clientReady', async () => {
 await testDatabaseConnection();
 await initializeDatabase();
