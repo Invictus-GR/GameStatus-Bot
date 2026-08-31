@@ -10,6 +10,7 @@ import {
 ModalBuilder,
 TextInputBuilder,
 TextInputStyle,
+  MessageFlags,
 } from 'discord.js';
 
 import fetch from 'node-fetch';
@@ -743,7 +744,7 @@ client.on('interactionCreate', async interaction => {
     if (!hasPermission) {
       return interaction.reply({
         content: '❌ You do not have permission to use this command.',
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       });
     }
     const modal = new ModalBuilder()
@@ -829,7 +830,7 @@ client.on('interactionCreate', async interaction => {
     if (fields.length === 0) {
       return interaction.reply({
         content: '❌ You need to fill in at least one field.',
-        ephemeral: true
+     flags: MessageFlags.Ephemeral
       });
     }
 
@@ -856,7 +857,7 @@ client.on('interactionCreate', async interaction => {
 
     await interaction.reply({
       content: '✅ Changelog published.',
-      ephemeral: true
+     flags: MessageFlags.Ephemeral
     });
   }
 });
@@ -877,7 +878,7 @@ client.on('interactionCreate', async interaction => {
   if (!hasPermission) {
     return interaction.reply({
       content: '❌ You do not have permission to use this command.',
-      ephemeral: true
+     flags: MessageFlags.Ephemeral
     });
   }
 
@@ -934,7 +935,7 @@ client.on('interactionCreate', async interaction => {
     content: dmSent
       ? `✅ Warning sent to ${user}.`
       : `⚠️ Warning logged, but I could not DM ${user}. Their DMs may be closed.`,
-    ephemeral: true
+    flags: MessageFlags.Ephemeral
   });
 });
 async function fetchServerMods() {
@@ -1150,7 +1151,7 @@ if (isShowMods) {
     if (!mods.length) {
       return interaction.reply({
         content: '❌ Could not find the server mod list.',
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       });
     }
 
@@ -1201,7 +1202,7 @@ if (isShowMods) {
       await interaction.reply({
         embeds: [embed],
         components: [buttons],
-        ephemeral: true
+      flags: MessageFlags.Ephemeral
       });
     } else {
       await interaction.update({
@@ -1216,7 +1217,7 @@ if (isShowMods) {
     if (!interaction.replied && !interaction.deferred) {
       await interaction.reply({
         content: '❌ Failed to load the server mod list. Please try again.',
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       });
     }
   }
