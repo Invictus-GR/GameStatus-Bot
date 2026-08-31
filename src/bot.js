@@ -368,7 +368,7 @@ async function sendDailyReport() {
       )
       .setColor(0x5865F2)
       .setFooter({
-        text: 'TLC Command • Created by MSgt_Invictus_GR for TLC'
+       text: 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC'
       })
       .setTimestamp();
 
@@ -468,8 +468,10 @@ async function checkQueueAlerts(queue, players, maxPlayers) {
   const messages = await channel.messages.fetch({ limit: 50 });
 
   const alerts = messages.filter(message =>
-    message.author.id === client.user.id &&
-   message.embeds?.[0]?.footer?.text === 'TLC Command • Created by MSgt_Invictus_GR for TLC'
+    message.author.id === client.user.id &&(
+  message.embeds?.[0]?.footer?.text === 'TLC Command • Created by MSgt_Invictus_GR for TLC' ||
+  message.embeds?.[0]?.footer?.text === 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC'
+)
   );
 
   const previousAlert = alerts.first();
@@ -550,7 +552,7 @@ for (const [, message] of alerts) {
 .setImage('https://raw.githubusercontent.com/Invictus-GR/GameStatus-Bot/main/TLC-queue-banner.png')
 
    .setFooter({
-  text: 'TLC Command • Created by MSgt_Invictus_GR for TLC'
+ text: 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC'
 })
     .setTimestamp();
 
@@ -647,7 +649,7 @@ const playerDisplay =
       )
       .setColor(0x57F287)
       .setFooter({
-       text: 'TLC Command • Created by MSgt_Invictus_GR for TLC'
+      text: 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC'
       })
       .setTimestamp();
 
@@ -704,7 +706,7 @@ consecutiveStatusFailures += 1;
         .setColor(0xED4245)
         
  .setFooter({
-  text: 'TLC Command • Created by MSgt_Invictus_GR for TLC'
+ text: 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC'
 })
         .setTimestamp();
 
@@ -1046,7 +1048,7 @@ for (const [modId, mod] of previousModSnapshot) {
       })
       .setColor(0xED4245)
       .setFooter({
-        text: 'TLC Command • Created by MSgt_Invictus_GR for TLC'
+       text: 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC'
       })
       .setTimestamp();
 
