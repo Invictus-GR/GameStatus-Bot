@@ -1031,7 +1031,8 @@ previousModSnapshot = currentSnapshot;
   // Nothing added or confirmed removed
 if (removedMods.length === 0 && addedMods.length === 0) {
   return;
-if (removedMods.length > 0) {
+}
+    if (removedMods.length > 0) {
     const channel = await client.channels.fetch(MOD_REMOVALS_CHANNEL_ID);
 
     if (!channel || !channel.isTextBased()) {
