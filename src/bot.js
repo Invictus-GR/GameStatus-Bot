@@ -16,6 +16,7 @@ import {
 import fetch from 'node-fetch';
 import cron from 'node-cron';
 import pg from 'pg';
+import { diagnosticCommand, handleDiagnosticCommand } from './diagnostics.js';
 
 const { Pool } = pg;
 const pool = new Pool({
@@ -1264,6 +1265,26 @@ async function handleModsButton(interaction) {
 
 client.on('interactionCreate', async interaction => {
   try {
+    if (interaction.isChatInputCommand() && interaction.commandName === 'test') {
+      await handleDiagnosticCommand(interaction, {
+        client,
+        pool,
+        fetchArmaHQPage,
+        parseServerPage,
+        fetchServerMods,
+        SERVER_URL,
+        SERVER_NAME,
+        CHANNEL_ID,
+        CHANGELOG_CHANNEL_ID,
+        WARNING_LOG_CHANNEL_ID,
+        GENERAL_CHANNEL_ID,
+        MOD_REMOVALS_CHANNEL_ID,
+        MOD_ADDED_CHANNEL_ID,
+        ADMIN_REPORT_CHANNEL_ID
+      });
+      return;
+    }
+
     if (interaction.isChatInputCommand() && interaction.commandName === 'changelog') {
       await handleChangelogCommand(interaction);
       return;
@@ -1420,8 +1441,8 @@ client.once('clientReady', async () => {
   await client.application.commands.set([]);
 
   const guild = client.guilds.cache.first();
-  await guild.commands.set([changelogCommand, warnCommand]);
-  console.log('/changelog command registered');
+  await guild.commands.set([changelogCommand, warnCommand, diagnosticCommand]);
+  console.log('/changelog, /warn and /test commands registered');
   console.log(`Discord bot connected as ${client.user.tag}`);
 
   await updateServerStatus();
