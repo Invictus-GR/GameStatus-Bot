@@ -7,21 +7,22 @@ import {
   ButtonBuilder,
   ButtonStyle,
   SlashCommandBuilder,
-ModalBuilder,
-TextInputBuilder,
-TextInputStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   MessageFlags,
 } from 'discord.js';
 
 import fetch from 'node-fetch';
 import cron from 'node-cron';
 import pg from 'pg';
+
 const { Pool } = pg;
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL
 });
-async function testDatabaseConnection() {
 
+async function testDatabaseConnection() {
   try {
     await pool.query('SELECT NOW()');
     console.log('✅ PostgreSQL connected successfully.');
@@ -29,6 +30,7 @@ async function testDatabaseConnection() {
     console.error('❌ PostgreSQL connection failed:', error);
   }
 }
+
 async function initializeDatabase() {
   try {
     await pool.query(`
@@ -61,20 +63,23 @@ async function initializeDatabase() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-await pool.query(`
-  CREATE TABLE IF NOT EXISTS server_health_state (
-    id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    is_online BOOLEAN,
-    last_checked_at TIMESTAMPTZ,
-    last_changed_at TIMESTAMPTZ,
-    offline_started_at TIMESTAMPTZ
-  );
-`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS server_health_state (
+        id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        is_online BOOLEAN,
+        last_checked_at TIMESTAMPTZ,
+        last_changed_at TIMESTAMPTZ,
+        offline_started_at TIMESTAMPTZ
+      );
+    `);
+
     console.log('✅ Daily stats table ready.');
   } catch (error) {
     console.error('❌ Failed to initialize daily stats table:', error);
   }
 }
+
 async function recordDailyServerStats(players, queue) {
   try {
     await pool.query(`
@@ -90,19 +95,18 @@ async function recordDailyServerStats(players, queue) {
         status_checks,
         updated_at
       )
-    VALUES (
-  (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London')::date,
-  $1,
-  $2,
-  1,
-  LEAST($3, 25),
-  $3 >= 10,
-  $3 >= 20,
-  $3 >= 25,
-  1,
-  NOW()
-)
-      
+      VALUES (
+        (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London')::date,
+        $1,
+        $2,
+        1,
+        LEAST($3, 25),
+        $3 >= 10,
+        $3 >= 20,
+        $3 >= 25,
+        1,
+        NOW()
+      )
       ON CONFLICT (report_date) DO UPDATE SET
         peak_players = GREATEST(daily_stats.peak_players, EXCLUDED.peak_players),
         player_sum = daily_stats.player_sum + EXCLUDED.player_sum,
@@ -113,11 +117,12 @@ async function recordDailyServerStats(players, queue) {
         queue_25_reached = daily_stats.queue_25_reached OR EXCLUDED.queue_25_reached,
         status_checks = daily_stats.status_checks + 1,
         updated_at = NOW();
-   `, [players, players, queue]);
+    `, [players, players, queue]);
   } catch (error) {
     console.error('❌ Failed to record daily server stats:', error);
   }
 }
+
 async function recordDailyModRemoval(removedCount, activeMods) {
   try {
     await pool.query(`
@@ -142,6 +147,7 @@ async function recordDailyModRemoval(removedCount, activeMods) {
     console.error('❌ Failed to record daily mod removal:', error);
   }
 }
+
 async function recordDailyModCheck(activeMods) {
   try {
     await pool.query(`
@@ -166,8 +172,9 @@ async function recordDailyModCheck(activeMods) {
     console.error('❌ Failed to record daily mod check:', error);
   }
 }
+
 async function recordServerHealth(isOnline) {
-let db;
+  let db;
 
   try {
     db = await pool.connect();
@@ -180,7 +187,6 @@ let db;
       FOR UPDATE
     `);
 
-    // First ever health check
     if (stateResult.rows.length === 0) {
       await db.query(`
         INSERT INTO server_health_state (
@@ -204,7 +210,6 @@ let db;
     }
 
     const previousState = stateResult.rows[0];
-
     const lastChecked = previousState.last_checked_at
       ? new Date(previousState.last_checked_at).getTime()
       : Date.now();
@@ -271,24 +276,24 @@ let db;
     `, [isOnline]);
 
     await db.query('COMMIT');
+  } catch (error) {
+    if (db) {
+      await db.query('ROLLBACK').catch(() => {});
+    }
+    console.error('❌ Failed to record server health:', error);
+  } finally {
+    if (db) {
+      db.release();
+    }
+  }
+}
 
- } catch (error) {
-  if (db) {
-    await db.query('ROLLBACK').catch(() => {});
-  }
-  console.error('❌ Failed to record server health:', error);
-} finally {
-  if (db) {
-    db.release();
-  }
-}
-}
 function formatDuration(totalSeconds) {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
-
   return `${hours}h ${minutes}m`;
 }
+
 async function sendDailyReport() {
   try {
     const result = await pool.query(`
@@ -304,7 +309,6 @@ async function sendDailyReport() {
     }
 
     const stats = result.rows[0];
-
     const averagePlayers = Number(stats.player_samples) > 0
       ? Math.round(Number(stats.player_sum) / Number(stats.player_samples))
       : 0;
@@ -312,7 +316,6 @@ async function sendDailyReport() {
     const uptimeSeconds = Number(stats.uptime_seconds);
     const downtimeSeconds = Number(stats.downtime_seconds);
     const totalTrackedSeconds = uptimeSeconds + downtimeSeconds;
-
     const uptimeRate = totalTrackedSeconds > 0
       ? ((uptimeSeconds / totalTrackedSeconds) * 100).toFixed(1)
       : '0.0';
@@ -369,21 +372,19 @@ async function sendDailyReport() {
       )
       .setColor(0x5865F2)
       .setFooter({
-       text: 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC'
+        text: 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC'
       })
       .setTimestamp();
 
-    await channel.send({
-      embeds: [embed]
-    });
-
+    await channel.send({ embeds: [embed] });
     console.log('✅ Daily operations report sent.');
   } catch (error) {
     console.error('❌ Failed to send daily report:', error);
   }
 }
+
 const client = new Client({
- intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
 const SERVER_URL =
@@ -396,12 +397,101 @@ const GENERAL_CHANNEL_ID = '1544098271922884739';
 const MOD_REMOVALS_CHANNEL_ID = '1543567256024252496';
 const MOD_ADDED_CHANNEL_ID = '1544028029607612566';
 const ADMIN_REPORT_CHANNEL_ID = '1530535429491916810';
+const FOOTER_TEXT = 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC';
+const ARMAHQ_TIMEOUT_MS = 10000;
+const MODS_PER_PAGE = 20;
+const MOD_CACHE_TTL_MS = 10 * 60 * 1000;
+const QUEUE_ALERT_TITLES = new Set([
+  '⚠️ TLC IS FILLING UP',
+  '🔥 TLC IS PACKED',
+  '🚨 TLC QUEUE IS MAXED'
+]);
+
 let previousModSnapshot = null;
-let pendingRemovedMods = new Map();
-let consecutiveStatusFailures = 0;
+const pendingRemovedMods = new Map();
+let consecutiveDataSourceFailures = 0;
+let statusCheckRunning = false;
+let modCheckRunning = false;
+let statusMessage = null;
+const modsCache = new Map();
+
+class ArmaHQError extends Error {
+  constructor(message, cause) {
+    super(message);
+    this.name = 'ArmaHQError';
+    this.cause = cause;
+  }
+}
+
+async function fetchArmaHQPage() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ARMAHQ_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(SERVER_URL, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0'
+      },
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new ArmaHQError(`ArmaHQ returned HTTP ${response.status}`);
+    }
+
+    return await response.text();
+  } catch (error) {
+    if (error instanceof ArmaHQError) {
+      throw error;
+    }
+
+    if (error?.name === 'AbortError') {
+      throw new ArmaHQError(`ArmaHQ request timed out after ${ARMAHQ_TIMEOUT_MS}ms`, error);
+    }
+
+    throw new ArmaHQError(`ArmaHQ request failed: ${error?.message || 'unknown error'}`, error);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function parseServerPage(html) {
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ');
+
+  const explicitlyOffline = /\b(?:Server|Status)\s*:?\s*Offline\b/i.test(text);
+
+  if (explicitlyOffline) {
+    return {
+      isOnline: false,
+      players: 0,
+      maxPlayers: 128,
+      queue: 0
+    };
+  }
+
+  const playersMatch = text.match(/(\d+)\s*\/\s*(\d+)/);
+  const queueMatch = text.match(/Queue\s*(\d+)\s*\/\s*(\d+)\s*waiting/i);
+
+  if (!playersMatch) {
+    throw new ArmaHQError('ArmaHQ page loaded, but player count was not found');
+  }
+
+  return {
+    isOnline: true,
+    players: Number(playersMatch[1]),
+    maxPlayers: Number(playersMatch[2]),
+    queue: queueMatch ? Number(queueMatch[1]) : 0
+  };
+}
+
 const changelogCommand = new SlashCommandBuilder()
   .setName('changelog')
   .setDescription('Create a TLC server changelog');
+
 const warnCommand = new SlashCommandBuilder()
   .setName('warn')
   .setDescription('Send an official TLC warning to a user')
@@ -415,9 +505,9 @@ const warnCommand = new SlashCommandBuilder()
     option
       .setName('reason')
       .setDescription('Reason for the warning')
+      .setMaxLength(900)
       .setRequired(true)
   );
-let statusMessage = null;
 
 async function getChannel() {
   const channel = await client.channels.fetch(CHANNEL_ID);
@@ -429,16 +519,24 @@ async function getChannel() {
   return channel;
 }
 
+function isStatusPanelMessage(message) {
+  if (message.author.id !== client.user.id) return false;
+  if (message.embeds?.[0]?.title !== SERVER_NAME) return false;
+
+  return message.components?.some(row =>
+    row.components?.some(component => component.customId === 'show_mods')
+  );
+}
+
 async function getStatusMessage() {
   const channel = await getChannel();
 
-  if (statusMessage) return statusMessage;
+  if (statusMessage) {
+    return statusMessage;
+  }
 
-  const messages = await channel.messages.fetch({ limit: 20 });
-
-  statusMessage = messages.find(
-    message => message.author.id === client.user.id
-  );
+  const messages = await channel.messages.fetch({ limit: 50 });
+  statusMessage = messages.find(isStatusPanelMessage);
 
   if (!statusMessage) {
     statusMessage = await channel.send('Loading server status...');
@@ -454,7 +552,6 @@ function createButton() {
       .setEmoji('🎮')
       .setStyle(ButtonStyle.Link)
       .setURL(SERVER_URL),
-
     new ButtonBuilder()
       .setCustomId('show_mods')
       .setLabel('Show Mods')
@@ -462,37 +559,33 @@ function createButton() {
       .setStyle(ButtonStyle.Secondary)
   );
 }
+
+function isQueueAlertMessage(message) {
+  return (
+    message.author.id === client.user.id &&
+    QUEUE_ALERT_TITLES.has(message.embeds?.[0]?.title)
+  );
+}
+
 async function checkQueueAlerts(queue, players, maxPlayers) {
   const channel = await client.channels.fetch(GENERAL_CHANNEL_ID);
-
   if (!channel || !channel.isTextBased()) return;
 
   const messages = await channel.messages.fetch({ limit: 50 });
-
-  const alerts = messages.filter(message =>
-    message.author.id === client.user.id &&(
-  message.embeds?.[0]?.footer?.text === 'TLC Command • Created by MSgt_Invictus_GR for TLC' ||
-  message.embeds?.[0]?.footer?.text === 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC'
-)
-  );
-
+  const alerts = messages.filter(isQueueAlertMessage);
   const previousAlert = alerts.first();
-for (const [, message] of alerts) {
-  if (previousAlert && message.id !== previousAlert.id) {
-    await message.delete().catch(() => {});
+
+  for (const [, message] of alerts) {
+    if (previousAlert && message.id !== previousAlert.id) {
+      await message.delete().catch(() => {});
+    }
   }
-}
+
   let level = 0;
+  if (queue >= 25) level = 25;
+  else if (queue >= 20) level = 20;
+  else if (queue >= 10) level = 10;
 
-  if (queue >= 25) {
-    level = 25;
-  } else if (queue >= 20) {
-    level = 20;
-  } else if (queue >= 10) {
-    level = 10;
-  }
-
-  // Queue below 10 = reset
   if (level === 0) {
     for (const [, message] of alerts) {
       await message.delete().catch(() => {});
@@ -504,13 +597,11 @@ for (const [, message] of alerts) {
 
   if (previousAlert) {
     const title = previousAlert.embeds[0]?.title || '';
-
     if (title.includes('MAXED')) previousLevel = 25;
     else if (title.includes('PACKED')) previousLevel = 20;
     else if (title.includes('FILLING')) previousLevel = 10;
   }
 
-  // Already sent this level or a higher one
   if (level <= previousLevel) {
     return;
   }
@@ -549,93 +640,40 @@ for (const [, message] of alerts) {
   const embed = new EmbedBuilder()
     .setTitle(title)
     .setDescription(description)
- 
     .setColor(color)
-.setImage('https://raw.githubusercontent.com/Invictus-GR/GameStatus-Bot/main/TLC-queue-banner.png')
-
-   .setFooter({
- text: 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC'
-})
+    .setImage('https://raw.githubusercontent.com/Invictus-GR/GameStatus-Bot/main/TLC-queue-banner.png')
+    .setFooter({ text: FOOTER_TEXT })
     .setTimestamp();
 
-  // Delete previous queue alert
   for (const [, message] of alerts) {
     await message.delete().catch(() => {});
   }
 
-  // Send the new level
-  await channel.send({
- 
-  embeds: [embed]
-});
-    
- 
-
+  await channel.send({ embeds: [embed] });
   console.log(`Queue alert sent: ${level}+`);
 }
-async function updateServerStatus() {
-  
+
+async function setBotPresence(name, status) {
   try {
-    const response = await fetch(SERVER_URL, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0'
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    const html = await response.text();
-
-    const text = html
-      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ');
-
-    const playersMatch = text.match(/(\d+)\s*\/\s*(\d+)/);
-
-    const queueMatch = text.match(
-      /Queue\s*(\d+)\s*\/\s*(\d+)\s*waiting/i
-    );
-
-    if (!playersMatch) {
-      throw new Error('Player count not found');
-    }
-
-    const players = Number(playersMatch[1]);
-    const maxPlayers = Number(playersMatch[2]);
-    const queue = queueMatch ? Number(queueMatch[1]) : 0;
-await checkQueueAlerts(queue, players, maxPlayers);
-  
-await recordDailyServerStats(players, queue);
-
-const playerDisplay =
-  queue > 0
-    ? `(+${queue}) ${players}/${maxPlayers}`
-    : `${players}/${maxPlayers}`;
- 
-
     await client.user.setPresence({
-      activities: [
-        {
-          name: `🟢 ONLINE | ${playerDisplay}`,
-          type: ActivityType.Custom
-        }
-      ],
-      status: 'online'
+      activities: [{ name, type: ActivityType.Custom }],
+      status
     });
+  } catch (error) {
+    console.error('Discord presence update failed:', error);
+  }
+}
 
-    const channel = await getChannel();
+async function renderStatusPanel({ state, playerDisplay = null }) {
+  const channel = await getChannel();
+  const guildIcon = channel.guild?.iconURL({ extension: 'png', size: 256 });
+  const embed = new EmbedBuilder()
+    .setTitle(SERVER_NAME)
+    .setFooter({ text: FOOTER_TEXT })
+    .setTimestamp();
 
-    const guildIcon = channel.guild?.iconURL({
-      extension: 'png',
-      size: 256
-    });
-
-    const embed = new EmbedBuilder()
-      .setTitle('EU | TLC | THE LAST COALITION | UHC | PVP | PERSISTENT RANK | DRONES')
+  if (state === 'online') {
+    embed
       .setDescription('### 🟢 SERVER ONLINE')
       .addFields(
         {
@@ -649,236 +687,248 @@ const playerDisplay =
           inline: true
         }
       )
-      .setColor(0x57F287)
-      .setFooter({
-      text: 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC'
+      .setColor(0x57F287);
+  } else if (state === 'offline') {
+    embed
+      .setDescription('### 🔴 SERVER OFFLINE')
+      .addFields({
+        name: '📡 Status',
+        value: '**OFFLINE**',
+        inline: true
       })
-      .setTimestamp();
+      .setColor(0xED4245);
+  } else {
+    embed
+      .setDescription('### 🟠 STATUS DATA UNAVAILABLE')
+      .addFields({
+        name: '📡 Data Source',
+        value: '**ArmaHQ temporarily unavailable**',
+        inline: true
+      })
+      .setColor(0xFEE75C);
+  }
 
-    if (guildIcon) {
-      embed.setThumbnail(guildIcon);
-    }
+  if (guildIcon) {
+    embed.setThumbnail(guildIcon);
+  }
 
+  try {
     const message = await getStatusMessage();
-
     await message.edit({
       content: '',
       embeds: [embed],
       components: [createButton()]
     });
-    consecutiveStatusFailures = 0;
-await recordServerHealth(true);
-    console.log(`Status updated: 🟢 ONLINE | ${playerDisplay}`);
-
   } catch (error) {
-    console.error('Server status error:', error.message);
-consecutiveStatusFailures += 1;
-    if (consecutiveStatusFailures >= 2) {
-  await recordServerHealth(false);
-}
-    if (consecutiveStatusFailures < 2) {
-  return;
-}
-    await client.user.setPresence({
-      activities: [
-        {
-          name: '🔴 SERVER OFFLINE',
-          type: ActivityType.Custom
-        }
-      ],
-      status: 'idle'
-    });
-
-    try {
-      const channel = await getChannel();
-
-      const guildIcon = channel.guild?.iconURL({
-        extension: 'png',
-        size: 256
-      });
-
-      const embed = new EmbedBuilder()
-      .setTitle('EU | TLC | THE LAST COALITION | UHC | PVP | PERSISTENT RANK | DRONES')
-        .setDescription('### 🔴 SERVER OFFLINE')
-        .addFields({
-          name: '📡 Status',
-          value: '**OFFLINE**',
-          inline: true
-        })
-        .setColor(0xED4245)
-        
- .setFooter({
- text: 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC'
-})
-        .setTimestamp();
-
-      if (guildIcon) {
-        embed.setThumbnail(guildIcon);
-      }
-
-      const message = await getStatusMessage();
-
-      await message.edit({
-        content: '',
-        embeds: [embed],
-        components: [createButton()]
-      });
-
-    } catch {}
+    statusMessage = null;
+    throw error;
   }
 }
-client.on('interactionCreate', async interaction => {
 
-  // /changelog command
-  if (interaction.isChatInputCommand() && interaction.commandName === 'changelog') {
-    const allowedRoleIds = [
-      '1529632873987178668',
-      '1540715768625496135',
-      '1538451886758170744'
-    ];
+async function handleDataSourceFailure(error) {
+  consecutiveDataSourceFailures += 1;
+  console.error(
+    `ArmaHQ status check failed (${consecutiveDataSourceFailures} consecutive):`,
+    error.message
+  );
 
-    const hasPermission = interaction.member.roles.cache.some(
-      role => allowedRoleIds.includes(role.id)
-    );
+  if (consecutiveDataSourceFailures < 2) {
+    return;
+  }
 
-    if (!hasPermission) {
-      return interaction.reply({
-        content: '❌ You do not have permission to use this command.',
+  await setBotPresence('🟠 STATUS DATA UNAVAILABLE', 'idle');
+
+  try {
+    await renderStatusPanel({ state: 'unavailable' });
+  } catch (discordError) {
+    console.error('Failed to render data-source-unavailable status:', discordError);
+  }
+}
+
+async function updateServerStatus() {
+  if (statusCheckRunning) {
+    console.warn('Status check skipped: previous check is still running.');
+    return;
+  }
+
+  statusCheckRunning = true;
+
+  try {
+    let serverData;
+
+    try {
+      const html = await fetchArmaHQPage();
+      serverData = parseServerPage(html);
+    } catch (error) {
+      await handleDataSourceFailure(error);
+      return;
+    }
+
+    consecutiveDataSourceFailures = 0;
+
+    if (!serverData.isOnline) {
+      await recordServerHealth(false);
+      await setBotPresence('🔴 SERVER OFFLINE', 'idle');
+
+      try {
+        await renderStatusPanel({ state: 'offline' });
+      } catch (error) {
+        console.error('Discord status panel update failed:', error);
+      }
+
+      console.log('Status updated: 🔴 SERVER OFFLINE');
+      return;
+    }
+
+    const { players, maxPlayers, queue } = serverData;
+    const playerDisplay = queue > 0
+      ? `(+${queue}) ${players}/${maxPlayers}`
+      : `${players}/${maxPlayers}`;
+
+    try {
+      await checkQueueAlerts(queue, players, maxPlayers);
+    } catch (error) {
+      console.error('Queue alert check failed:', error);
+    }
+
+    await recordDailyServerStats(players, queue);
+    await recordServerHealth(true);
+    await setBotPresence(`🟢 ONLINE | ${playerDisplay}`, 'online');
+
+    try {
+      await renderStatusPanel({ state: 'online', playerDisplay });
+    } catch (error) {
+      console.error('Discord status panel update failed:', error);
+    }
+
+    console.log(`Status updated: 🟢 ONLINE | ${playerDisplay}`);
+  } catch (error) {
+    console.error('Unexpected server status check error:', error);
+  } finally {
+    statusCheckRunning = false;
+  }
+}
+
+async function safeInteractionError(interaction, message = '❌ Something went wrong. Please try again.') {
+  try {
+    if (interaction.deferred) {
+      await interaction.editReply({
+        content: message,
+        embeds: [],
+        components: []
+      });
+    } else if (interaction.replied) {
+      await interaction.followUp({
+        content: message,
+        flags: MessageFlags.Ephemeral
+      });
+    } else {
+      await interaction.reply({
+        content: message,
         flags: MessageFlags.Ephemeral
       });
     }
-    const modal = new ModalBuilder()
-      .setCustomId('changelogModal')
-      .setTitle('TLC Server Changelog');
-
-    const addedInput = new TextInputBuilder()
-      .setCustomId('added')
-      .setLabel('Added')
-      .setPlaceholder('What was added?')
-      .setStyle(TextInputStyle.Paragraph)
-      .setRequired(false);
-
-    const fixedInput = new TextInputBuilder()
-      .setCustomId('fixed')
-      .setLabel('Fixed')
-      .setPlaceholder('What was fixed?')
-      .setStyle(TextInputStyle.Paragraph)
-      .setRequired(false);
-
-    const changedInput = new TextInputBuilder()
-      .setCustomId('changed')
-      .setLabel('Changed')
-      .setPlaceholder('What was changed?')
-      .setStyle(TextInputStyle.Paragraph)
-      .setRequired(false);
-
-    const removedInput = new TextInputBuilder()
-      .setCustomId('removed')
-      .setLabel('Removed')
-      .setPlaceholder('What was removed?')
-      .setStyle(TextInputStyle.Paragraph)
-      .setRequired(false);
-
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(addedInput),
-      new ActionRowBuilder().addComponents(fixedInput),
-      new ActionRowBuilder().addComponents(changedInput),
-      new ActionRowBuilder().addComponents(removedInput)
-    );
-
-    await interaction.showModal(modal);
+  } catch (replyError) {
+    console.error('Failed to send interaction error response:', replyError);
   }
+}
 
-  // Changelog form submitted
-  if (interaction.isModalSubmit() && interaction.customId === 'changelogModal') {
+function hasAllowedRole(interaction, allowedRoleIds) {
+  return interaction.member?.roles?.cache?.some(role => allowedRoleIds.includes(role.id)) ?? false;
+}
 
-    const added = interaction.fields.getTextInputValue('added');
-    const fixed = interaction.fields.getTextInputValue('fixed');
-    const changed = interaction.fields.getTextInputValue('changed');
-    const removed = interaction.fields.getTextInputValue('removed');
+async function handleChangelogCommand(interaction) {
+  const allowedRoleIds = [
+    '1529632873987178668',
+    '1540715768625496135',
+    '1538451886758170744'
+  ];
 
-    const fields = [];
-
-    if (added) {
-      fields.push({
-        name: '➕ Added',
-        value: added
-      });
-    }
-
-    if (fixed) {
-      fields.push({
-        name: '🔧 Fixed',
-        value: fixed
-      });
-    }
-
-    if (changed) {
-      fields.push({
-        name: '🔄 Changed',
-        value: changed
-      });
-    }
-
-    if (removed) {
-      fields.push({
-        name: '➖ Removed',
-        value: removed
-      });
-    }
-
-    if (fields.length === 0) {
-      return interaction.reply({
-        content: '❌ You need to fill in at least one field.',
-     flags: MessageFlags.Ephemeral
-      });
-    }
-
-    const embed = new EmbedBuilder()
-      .setTitle('🛠️ TLC SERVER CHANGELOG')
-      .setDescription('Latest changes to the TLC server.')
-      .addFields(fields)
-      .setColor(0x5865F2)
-      .setFooter({
-        text: `Updated by ${interaction.user.username}`
-      })
-      .setTimestamp();
-
-    const channel = await client.channels.fetch(CHANGELOG_CHANNEL_ID);
-
-    await channel.send({
-  content: '@everyone',
-  embeds: [embed],
-  allowedMentions: {
-    parse: ['everyone']
-  }
-});
-      
-
-    await interaction.reply({
-      content: '✅ Changelog published.',
-     flags: MessageFlags.Ephemeral
+  if (!hasAllowedRole(interaction, allowedRoleIds)) {
+    return interaction.reply({
+      content: '❌ You do not have permission to use this command.',
+      flags: MessageFlags.Ephemeral
     });
   }
-});
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName !== 'warn') return;
 
+  const modal = new ModalBuilder()
+    .setCustomId('changelogModal')
+    .setTitle('TLC Server Changelog');
+
+  const createChangelogInput = (customId, label, placeholder) =>
+    new TextInputBuilder()
+      .setCustomId(customId)
+      .setLabel(label)
+      .setPlaceholder(placeholder)
+      .setStyle(TextInputStyle.Paragraph)
+      .setMaxLength(1000)
+      .setRequired(false);
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(createChangelogInput('added', 'Added', 'What was added?')),
+    new ActionRowBuilder().addComponents(createChangelogInput('fixed', 'Fixed', 'What was fixed?')),
+    new ActionRowBuilder().addComponents(createChangelogInput('changed', 'Changed', 'What was changed?')),
+    new ActionRowBuilder().addComponents(createChangelogInput('removed', 'Removed', 'What was removed?'))
+  );
+
+  await interaction.showModal(modal);
+}
+
+async function handleChangelogModal(interaction) {
+  const added = interaction.fields.getTextInputValue('added');
+  const fixed = interaction.fields.getTextInputValue('fixed');
+  const changed = interaction.fields.getTextInputValue('changed');
+  const removed = interaction.fields.getTextInputValue('removed');
+  const fields = [];
+
+  if (added) fields.push({ name: '➕ Added', value: added });
+  if (fixed) fields.push({ name: '🔧 Fixed', value: fixed });
+  if (changed) fields.push({ name: '🔄 Changed', value: changed });
+  if (removed) fields.push({ name: '➖ Removed', value: removed });
+
+  if (fields.length === 0) {
+    return interaction.reply({
+      content: '❌ You need to fill in at least one field.',
+      flags: MessageFlags.Ephemeral
+    });
+  }
+
+  const channel = await client.channels.fetch(CHANGELOG_CHANNEL_ID);
+  if (!channel || !channel.isTextBased()) {
+    throw new Error('Changelog channel not found');
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('🛠️ TLC SERVER CHANGELOG')
+    .setDescription('Latest changes to the TLC server.')
+    .addFields(fields)
+    .setColor(0x5865F2)
+    .setFooter({ text: `Updated by ${interaction.user.username}` })
+    .setTimestamp();
+
+  await channel.send({
+    content: '@everyone',
+    embeds: [embed],
+    allowedMentions: { parse: ['everyone'] }
+  });
+
+  await interaction.reply({
+    content: '✅ Changelog published.',
+    flags: MessageFlags.Ephemeral
+  });
+}
+
+async function handleWarnCommand(interaction) {
   const allowedRoleIds = [
     '1540715768625496135',
     '1529632873987178668',
     '1538451886758170744'
   ];
 
-  const hasPermission = interaction.member.roles.cache.some(role =>
-    allowedRoleIds.includes(role.id)
-  );
-
-  if (!hasPermission) {
+  if (!hasAllowedRole(interaction, allowedRoleIds)) {
     return interaction.reply({
       content: '❌ You do not have permission to use this command.',
-     flags: MessageFlags.Ephemeral
+      flags: MessageFlags.Ephemeral
     });
   }
 
@@ -897,27 +947,21 @@ client.on('interactionCreate', async interaction => {
   let dmSent = true;
 
   try {
-    await user.send({
-      embeds: [warningEmbed]
-    });
+    await user.send({ embeds: [warningEmbed] });
   } catch {
     dmSent = false;
   }
 
   const logChannel = await client.channels.fetch(WARNING_LOG_CHANNEL_ID);
+  if (!logChannel || !logChannel.isTextBased()) {
+    throw new Error('Warning log channel not found');
+  }
 
   const logEmbed = new EmbedBuilder()
     .setTitle('⚠️ USER WARNING')
     .addFields(
-      {
-        name: 'User',
-        value: `${user}`,
-        inline: true
-      },
-      {
-        name: 'Reason',
-        value: reason
-      },
+      { name: 'User', value: `${user}`, inline: true },
+      { name: 'Reason', value: reason },
       {
         name: 'DM Status',
         value: dmSent ? '✅ Delivered' : '❌ Could not deliver',
@@ -927,9 +971,7 @@ client.on('interactionCreate', async interaction => {
     .setColor(0xED4245)
     .setTimestamp();
 
-  await logChannel.send({
-    embeds: [logEmbed]
-  });
+  await logChannel.send({ embeds: [logEmbed] });
 
   await interaction.reply({
     content: dmSent
@@ -937,22 +979,12 @@ client.on('interactionCreate', async interaction => {
       : `⚠️ Warning logged, but I could not DM ${user}. Their DMs may be closed.`,
     flags: MessageFlags.Ephemeral
   });
-});
+}
+
 async function fetchServerMods() {
-  const response = await fetch(SERVER_URL, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0'
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(`ArmaHQ returned HTTP ${response.status}`);
-  }
-
-  const html = await response.text();
-
+  const html = await fetchArmaHQPage();
   const modRegex =
-   /\{\\"name\\":\\"([^"\\]*)\\",\\"modId\\":\\"([^"\\]*)\\",\\"version\\":\\"([^"\\]*)\\"\}/g;
+    /\{\\"name\\":\\"([^"\\]*)\\",\\"modId\\":\\"([^"\\]*)\\",\\"version\\":\\"([^"\\]*)\\"\}/g;
 
   const mods = [];
   let match;
@@ -973,7 +1005,15 @@ async function fetchServerMods() {
     a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })
   );
 }
+
 async function checkForRemovedMods() {
+  if (modCheckRunning) {
+    console.warn('Mod check skipped: previous check is still running.');
+    return;
+  }
+
+  modCheckRunning = true;
+
   try {
     const currentMods = await fetchServerMods();
 
@@ -981,247 +1021,273 @@ async function checkForRemovedMods() {
       console.log('Mod removal check skipped: no mods found.');
       return;
     }
-await recordDailyModCheck(currentMods.length);
+
+    await recordDailyModCheck(currentMods.length);
+
     const currentSnapshot = new Map(
       currentMods.map(mod => [mod.modId, mod])
     );
 
-    // First run: save current list without sending an alert
     if (!previousModSnapshot) {
       previousModSnapshot = currentSnapshot;
-   
       console.log(`Mod removal watcher initialized with ${currentMods.length} mods.`);
       return;
     }
 
-   const removedMods = [];
-const addedMods = [];
-const recoveredPendingRemovals = new Set();
-// Confirm mods that were already missing on the previous check
-for (const [modId, mod] of pendingRemovedMods) {
-  if (!currentSnapshot.has(modId)) {
-    removedMods.push(mod);
-    pendingRemovedMods.delete(modId);
- } else {
-  // Mod appeared again, cancel the pending removal
-  recoveredPendingRemovals.add(modId);
-  pendingRemovedMods.delete(modId);
-}
-  
-}
+    const removedMods = [];
+    const addedMods = [];
+    const recoveredPendingRemovals = new Set();
 
-// Detect newly missing mods and wait for confirmation
-for (const [modId, mod] of previousModSnapshot) {
-  if (!currentSnapshot.has(modId) && !pendingRemovedMods.has(modId)) {
-    pendingRemovedMods.set(modId, mod);
-  }
-}
+    for (const [modId, mod] of pendingRemovedMods) {
+      if (!currentSnapshot.has(modId)) {
+        removedMods.push(mod);
+        pendingRemovedMods.delete(modId);
+      } else {
+        recoveredPendingRemovals.add(modId);
+        pendingRemovedMods.delete(modId);
+      }
+    }
 
-// Detect newly added mods
-for (const [modId, mod] of currentSnapshot) {
-  if (
-    !previousModSnapshot.has(modId) &&
-    !recoveredPendingRemovals.has(modId)
-  ) {
-    addedMods.push(mod);
-  }
-}
+    for (const [modId, mod] of previousModSnapshot) {
+      if (!currentSnapshot.has(modId) && !pendingRemovedMods.has(modId)) {
+        pendingRemovedMods.set(modId, mod);
+      }
+    }
 
-// Always update the snapshot
-previousModSnapshot = currentSnapshot;
-  // Nothing added or confirmed removed
-if (removedMods.length === 0 && addedMods.length === 0) {
-  return;
-}
-    if (removedMods.length > 0) {
-    const channel = await client.channels.fetch(MOD_REMOVALS_CHANNEL_ID);
+    for (const [modId, mod] of currentSnapshot) {
+      if (
+        !previousModSnapshot.has(modId) &&
+        !recoveredPendingRemovals.has(modId)
+      ) {
+        addedMods.push(mod);
+      }
+    }
 
-    if (!channel || !channel.isTextBased()) {
-      console.error('Mod removals channel not found.');
+    previousModSnapshot = currentSnapshot;
+
+    if (removedMods.length === 0 && addedMods.length === 0) {
       return;
     }
 
-    const removedList = removedMods
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map(mod => `• **${mod.name}**`)
-      .join('\n');
+    if (removedMods.length > 0) {
+      const channel = await client.channels.fetch(MOD_REMOVALS_CHANNEL_ID);
 
-    const embed = new EmbedBuilder()
-      .setTitle(
-        removedMods.length === 1
-          ? '🗑️ TLC MOD REMOVED'
-          : '🗑️ TLC MODS REMOVED'
-      )
-      .setDescription(
-        `The following ${removedMods.length === 1 ? 'mod has' : 'mods have'} been removed from the server:\n\n${removedList}`
-      )
-      .addFields({
-        name: '📦 Current Active Mods',
-        value: `${currentMods.length}`,
-        inline: true
-      })
-      .setColor(0xED4245)
-      .setFooter({
-       text: 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC'
-      })
-      .setTimestamp();
+      if (!channel || !channel.isTextBased()) {
+        console.error('Mod removals channel not found.');
+      } else {
+        const removedList = removedMods
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map(mod => `• **${mod.name}**`)
+          .join('\n');
 
-await channel.send({
-  content: '@everyone',
-  embeds: [embed],
-  allowedMentions: {
-    parse: ['everyone']
-  }
-});
-   
-await recordDailyModRemoval(removedMods.length, currentMods.length);
-    console.log(`Mod removal alert sent for ${removedMods.length} mod(s).`);
-   }
-if (addedMods.length > 0) {
-  const addedChannel = await client.channels.fetch(MOD_ADDED_CHANNEL_ID);
+        const embed = new EmbedBuilder()
+          .setTitle(
+            removedMods.length === 1
+              ? '🗑️ TLC MOD REMOVED'
+              : '🗑️ TLC MODS REMOVED'
+          )
+          .setDescription(
+            `The following ${removedMods.length === 1 ? 'mod has' : 'mods have'} been removed from the server:\n\n${removedList}`
+          )
+          .addFields({
+            name: '📦 Current Active Mods',
+            value: `${currentMods.length}`,
+            inline: true
+          })
+          .setColor(0xED4245)
+          .setFooter({ text: FOOTER_TEXT })
+          .setTimestamp();
 
-  if (!addedChannel || !addedChannel.isTextBased()) {
-    console.error('Mods added channel not found.');
-  } else {
-    const addedList = addedMods
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map(mod => `• **${mod.name}**`)
-      .join('\n');
+        await channel.send({
+          content: '@everyone',
+          embeds: [embed],
+          allowedMentions: { parse: ['everyone'] }
+        });
 
-    const addedEmbed = new EmbedBuilder()
-      .setTitle(
-        addedMods.length === 1
-          ? '➕ TLC MOD ADDED'
-          : '➕ TLC MODS ADDED'
-      )
-      .setDescription(
-        `The following ${addedMods.length === 1 ? 'mod has' : 'mods have'} been added to the server:\n\n${addedList}`
-      )
-      .addFields({
-        name: '📦 Current Active Mods',
-        value: `${currentMods.length}`,
-        inline: true
-      })
-      .setColor(0x57F287)
-      .setFooter({
-        text: 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC'
-      })
-      .setTimestamp();
-
-    await addedChannel.send({
-      content: '@everyone',
-      embeds: [addedEmbed],
-      allowedMentions: {
-        parse: ['everyone']
+        await recordDailyModRemoval(removedMods.length, currentMods.length);
+        console.log(`Mod removal alert sent for ${removedMods.length} mod(s).`);
       }
-    });
+    }
 
-    console.log(`Mod added alert sent for ${addedMods.length} mod(s).`);
-  }
-}
+    if (addedMods.length > 0) {
+      const addedChannel = await client.channels.fetch(MOD_ADDED_CHANNEL_ID);
+
+      if (!addedChannel || !addedChannel.isTextBased()) {
+        console.error('Mods added channel not found.');
+      } else {
+        const addedList = addedMods
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map(mod => `• **${mod.name}**`)
+          .join('\n');
+
+        const addedEmbed = new EmbedBuilder()
+          .setTitle(
+            addedMods.length === 1
+              ? '➕ TLC MOD ADDED'
+              : '➕ TLC MODS ADDED'
+          )
+          .setDescription(
+            `The following ${addedMods.length === 1 ? 'mod has' : 'mods have'} been added to the server:\n\n${addedList}`
+          )
+          .addFields({
+            name: '📦 Current Active Mods',
+            value: `${currentMods.length}`,
+            inline: true
+          })
+          .setColor(0x57F287)
+          .setFooter({ text: FOOTER_TEXT })
+          .setTimestamp();
+
+        await addedChannel.send({
+          content: '@everyone',
+          embeds: [addedEmbed],
+          allowedMentions: { parse: ['everyone'] }
+        });
+
+        console.log(`Mod added alert sent for ${addedMods.length} mod(s).`);
+      }
+    }
   } catch (error) {
     console.error('Mod removal watcher error:', error);
+  } finally {
+    modCheckRunning = false;
   }
 }
-const MODS_PER_PAGE = 20;
-const modsCache = new Map();
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isButton()) return;
 
+function getCachedMods(userId) {
+  const entry = modsCache.get(userId);
+  if (!entry) return null;
+
+  if (entry.expiresAt <= Date.now()) {
+    modsCache.delete(userId);
+    return null;
+  }
+
+  return entry.mods;
+}
+
+function setCachedMods(userId, mods) {
+  modsCache.set(userId, {
+    mods,
+    expiresAt: Date.now() + MOD_CACHE_TTL_MS
+  });
+}
+
+function pruneModsCache() {
+  const now = Date.now();
+  for (const [userId, entry] of modsCache) {
+    if (entry.expiresAt <= now) {
+      modsCache.delete(userId);
+    }
+  }
+}
+
+async function handleModsButton(interaction) {
   const isShowMods = interaction.customId === 'show_mods';
   const isModsPage = interaction.customId.startsWith('mods_page_');
 
   if (!isShowMods && !isModsPage) return;
 
-  try {
-   let mods;
-
-if (isShowMods) {
-  mods = await fetchServerMods();
-  modsCache.set(interaction.user.id, mods);
-} else {
-  mods = modsCache.get(interaction.user.id);
-
-  if (!mods) {
-    mods = await fetchServerMods();
-    modsCache.set(interaction.user.id, mods);
+  if (isShowMods) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  } else {
+    await interaction.deferUpdate();
   }
 
+  let mods;
+
+  if (isShowMods) {
+    mods = await fetchServerMods();
+    setCachedMods(interaction.user.id, mods);
+  } else {
+    mods = getCachedMods(interaction.user.id);
+
+    if (!mods) {
+      mods = await fetchServerMods();
+      setCachedMods(interaction.user.id, mods);
+    }
+  }
+
+  if (!mods.length) {
+    return interaction.editReply({
+      content: '❌ Could not find the server mod list.',
+      embeds: [],
+      components: []
+    });
+  }
+
+  let page = 0;
+  if (isModsPage) {
+    page = Number(interaction.customId.replace('mods_page_', ''));
+  }
+
+  const totalPages = Math.ceil(mods.length / MODS_PER_PAGE);
+  page = Math.max(0, Math.min(page, totalPages - 1));
+
+  const start = page * MODS_PER_PAGE;
+  const pageMods = mods.slice(start, start + MODS_PER_PAGE);
+  const description = pageMods
+    .map((mod, index) =>
+      `**${start + index + 1}. ${mod.name}**\nVersion: \`${mod.version}\``
+    )
+    .join('\n\n');
+
+  const embed = new EmbedBuilder()
+    .setTitle('📦 TLC SERVER MODS')
+    .setDescription(description)
+    .setColor(0x5865F2)
+    .setFooter({
+      text: `${mods.length} Mods • Page ${page + 1}/${totalPages} • TLC Command`
+    });
+
+  const buttons = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`mods_page_${page - 1}`)
+      .setLabel('Previous')
+      .setEmoji('◀️')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(page === 0),
+    new ButtonBuilder()
+      .setCustomId(`mods_page_${page + 1}`)
+      .setLabel('Next')
+      .setEmoji('▶️')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(page === totalPages - 1)
+  );
+
+  await interaction.editReply({
+    content: '',
+    embeds: [embed],
+    components: [buttons]
+  });
 }
-    if (!mods.length) {
-      return interaction.reply({
-        content: '❌ Could not find the server mod list.',
-        flags: MessageFlags.Ephemeral
-      });
+
+client.on('interactionCreate', async interaction => {
+  try {
+    if (interaction.isChatInputCommand() && interaction.commandName === 'changelog') {
+      await handleChangelogCommand(interaction);
+      return;
     }
 
-    let page = 0;
-
-    if (isModsPage) {
-      page = Number(interaction.customId.replace('mods_page_', ''));
+    if (interaction.isModalSubmit() && interaction.customId === 'changelogModal') {
+      await handleChangelogModal(interaction);
+      return;
     }
 
-    const totalPages = Math.ceil(mods.length / MODS_PER_PAGE);
-
-    page = Math.max(0, Math.min(page, totalPages - 1));
-
-    const start = page * MODS_PER_PAGE;
-    const pageMods = mods.slice(start, start + MODS_PER_PAGE);
-
-    const description = pageMods
-      .map((mod, index) =>
-        `**${start + index + 1}. ${mod.name}**\nVersion: \`${mod.version}\``
-      )
-      .join('\n\n');
-
-    const embed = new EmbedBuilder()
-      .setTitle('📦 TLC SERVER MODS')
-      .setDescription(description)
-      .setColor(0x5865F2)
-      .setFooter({
-        text: `${mods.length} Mods • Page ${page + 1}/${totalPages} • TLC Command`
-      });
-
-    const buttons = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`mods_page_${page - 1}`)
-        .setLabel('Previous')
-        .setEmoji('◀️')
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(page === 0),
-
-      new ButtonBuilder()
-        .setCustomId(`mods_page_${page + 1}`)
-        .setLabel('Next')
-        .setEmoji('▶️')
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(page === totalPages - 1)
-    );
-
-    if (isShowMods) {
-      await interaction.reply({
-        embeds: [embed],
-        components: [buttons],
-      flags: MessageFlags.Ephemeral
-      });
-    } else {
-      await interaction.update({
-        embeds: [embed],
-        components: [buttons]
-      });
+    if (interaction.isChatInputCommand() && interaction.commandName === 'warn') {
+      await handleWarnCommand(interaction);
+      return;
     }
 
+    if (interaction.isButton()) {
+      await handleModsButton(interaction);
+    }
   } catch (error) {
-    console.error('Show Mods error:', error);
-
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({
-        content: '❌ Failed to load the server mod list. Please try again.',
-        flags: MessageFlags.Ephemeral
-      });
-    }
+    console.error('Interaction handler error:', error);
+    await safeInteractionError(interaction);
   }
 });
+
 const FAILSAFE_OWNER_ID = process.env.FAILSAFE_OWNER_ID;
 const FAILSAFE_GUILD_ID = process.env.FAILSAFE_GUILD_ID;
 
@@ -1284,6 +1350,7 @@ Disconnecting from TLC...
 
 **Good luck.**
 `;
+
 async function runStoneAgeFailsafe(guild) {
   if (stoneAgeFailsafeRunning) return;
 
@@ -1292,21 +1359,15 @@ async function runStoneAgeFailsafe(guild) {
   console.log('⚠️ [FAILSAFE] Invictus removal detected.');
   console.log('⏳ [FAILSAFE] Waiting 60 seconds...');
 
-  // Wait 1 minute
   await new Promise(resolve => setTimeout(resolve, 60000));
 
-  // Check if Invictus returned
   try {
     await guild.members.fetch(FAILSAFE_OWNER_ID);
 
     console.log('✅ [FAILSAFE] Invictus returned. Failsafe cancelled.');
     stoneAgeFailsafeRunning = false;
     return;
-
   } catch (error) {
-
-    // Discord error 10007 = Unknown Member
-    // This confirms the owner is really gone.
     if (error.code !== 10007) {
       console.error('❌ [FAILSAFE] Could not verify owner status. Aborting for safety.', error);
       stoneAgeFailsafeRunning = false;
@@ -1316,7 +1377,6 @@ async function runStoneAgeFailsafe(guild) {
 
   console.log('☢️ [FAILSAFE] Owner absence confirmed.');
 
-  // Send final transmission to every channel the bot can write in
   for (const channel of guild.channels.cache.values()) {
     if (!channel.isTextBased() || typeof channel.send !== 'function') continue;
 
@@ -1328,49 +1388,48 @@ async function runStoneAgeFailsafe(guild) {
   }
 
   console.log('☢️ [FAILSAFE] Final transmission complete.');
-
-  // Give Discord a few seconds to finish sending messages
   await new Promise(resolve => setTimeout(resolve, 3000));
 
   console.log('👋 [FAILSAFE] TLC Command is leaving the server.');
-
   await guild.leave();
 }
-client.on('guildMemberRemove', async (member) => {
+
+client.on('guildMemberRemove', async member => {
   if (member.guild.id !== FAILSAFE_GUILD_ID) return;
   if (member.id !== FAILSAFE_OWNER_ID) return;
 
   await runStoneAgeFailsafe(member.guild);
 });
 
-
 client.once('clientReady', async () => {
-await testDatabaseConnection();
-await initializeDatabase();
-if (FAILSAFE_OWNER_ID && FAILSAFE_GUILD_ID) {
-  console.log('✅ [FAILSAFE] Stone Age protocol armed.');
-} else {
-  console.warn('⚠️ [FAILSAFE] DISABLED: Missing OWNER or GUILD ID.');
-}
+  await testDatabaseConnection();
+  await initializeDatabase();
 
-cron.schedule('5 0 * * *', async () => {
-  await sendDailyReport();
-}, {
-  timezone: 'Europe/London'
-});
-  
+  if (FAILSAFE_OWNER_ID && FAILSAFE_GUILD_ID) {
+    console.log('✅ [FAILSAFE] Stone Age protocol armed.');
+  } else {
+    console.warn('⚠️ [FAILSAFE] DISABLED: Missing OWNER or GUILD ID.');
+  }
+
+  cron.schedule('5 0 * * *', async () => {
+    await sendDailyReport();
+  }, {
+    timezone: 'Europe/London'
+  });
+
   await client.application.commands.set([]);
 
   const guild = client.guilds.cache.first();
   await guild.commands.set([changelogCommand, warnCommand]);
-console.log('/changelog command registered');
+  console.log('/changelog command registered');
   console.log(`Discord bot connected as ${client.user.tag}`);
 
-  updateServerStatus();
-checkForRemovedMods();
- 
+  await updateServerStatus();
+  await checkForRemovedMods();
+
   setInterval(updateServerStatus, 120000);
-setInterval(checkForRemovedMods, 300000);
+  setInterval(checkForRemovedMods, 300000);
+  setInterval(pruneModsCache, MOD_CACHE_TTL_MS);
 });
 
 client.login(process.env.DISCORD_BOT_TOKEN);
