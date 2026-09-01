@@ -34,6 +34,15 @@ import {
   deserializeModWatcherState,
   serializeModWatcherState
 } from './modWatcherState.js';
+import {
+  createServerStatusAlertState,
+  deserializeServerStatusAlertState,
+  markServerStatusAlertDelivered,
+  observeServerStatus,
+  serializeServerStatusAlertState,
+  SERVER_OFFLINE_CONFIRMATIONS,
+  SERVER_STATUS_CHECK_INTERVAL_MS
+} from './serverStatusAlertState.js';
 
 const { Pool } = pg;
 const pool = new Pool({
@@ -88,8 +97,14 @@ async function initializeDatabase() {
         is_online BOOLEAN,
         last_checked_at TIMESTAMPTZ,
         last_changed_at TIMESTAMPTZ,
-        offline_started_at TIMESTAMPTZ
+        offline_started_at TIMESTAMPTZ,
+        alert_state JSONB
       );
+    `);
+
+    await pool.query(`
+      ALTER TABLE server_health_state
+      ADD COLUMN IF NOT EXISTS alert_state JSONB;
     `);
 
     await pool.query(`
@@ -425,6 +440,7 @@ const MOD_ADDED_CHANNEL_ID = '1544028029607612566';
 const ADMIN_REPORT_CHANNEL_ID = '1530535429491916810';
 const FOOTER_TEXT = 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC';
 const ARMAHQ_TIMEOUT_MS = 10000;
+const SERVER_STATUS_ALERT_SEND_ATTEMPTS = 3;
 const MODS_PER_PAGE = 20;
 const MOD_CACHE_TTL_MS = 10 * 60 * 1000;
 const QUEUE_ALERT_TITLES = new Set([
@@ -442,6 +458,9 @@ let consecutiveDataSourceFailures = 0;
 let statusCheckRunning = false;
 let modCheckRunning = false;
 let statusMessage = null;
+let serverStatusAlertState = createServerStatusAlertState();
+let lastPersistedServerStatusAlertState = null;
+let armaHQPageFetchInFlight = null;
 const modsCache = new Map();
 
 class ArmaHQError extends Error {
@@ -522,7 +541,62 @@ async function restoreModWatcherState() {
   }
 }
 
-async function fetchArmaHQPage() {
+async function persistServerStatusAlertState({ force = false } = {}) {
+  const state = serializeServerStatusAlertState(serverStatusAlertState);
+  const serializedState = JSON.stringify(state);
+
+  if (!force && serializedState === lastPersistedServerStatusAlertState) {
+    return false;
+  }
+
+  try {
+    await pool.query(`
+      INSERT INTO server_health_state (id, alert_state)
+      VALUES (1, $1::jsonb)
+      ON CONFLICT (id) DO UPDATE SET
+        alert_state = EXCLUDED.alert_state;
+    `, [serializedState]);
+
+    lastPersistedServerStatusAlertState = serializedState;
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to persist server status alert state:', error);
+    return false;
+  }
+}
+
+async function restoreServerStatusAlertState() {
+  try {
+    const result = await pool.query(`
+      SELECT alert_state
+      FROM server_health_state
+      WHERE id = 1
+    `);
+
+    if (result.rows.length === 0 || !result.rows[0].alert_state) {
+      console.log('No persisted server status alert state found; live status will be baselined.');
+      return false;
+    }
+
+    serverStatusAlertState = deserializeServerStatusAlertState(
+      result.rows[0].alert_state
+    );
+    lastPersistedServerStatusAlertState = JSON.stringify(
+      serializeServerStatusAlertState(serverStatusAlertState)
+    );
+    console.log(
+      `Restored server status alert state: ` +
+      `${serverStatusAlertState.confirmedStatus ?? 'uninitialized'}, ` +
+      `${serverStatusAlertState.pendingAlerts.length} queued alert(s).`
+    );
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to restore server status alert state:', error);
+    return false;
+  }
+}
+
+async function requestArmaHQPage() {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ARMAHQ_TIMEOUT_MS);
 
@@ -552,6 +626,17 @@ async function fetchArmaHQPage() {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function fetchArmaHQPage() {
+  if (!armaHQPageFetchInFlight) {
+    armaHQPageFetchInFlight = requestArmaHQPage()
+      .finally(() => {
+        armaHQPageFetchInFlight = null;
+      });
+  }
+
+  return armaHQPageFetchInFlight;
 }
 
 function parseServerPage(html) {
@@ -824,6 +909,105 @@ async function renderStatusPanel({ state, playerDisplay = null }) {
   }
 }
 
+function formatApproximateDuration(startedAt, endedAt) {
+  const totalSeconds = Math.max(0, Math.round((endedAt - startedAt) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts = [];
+
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (hours === 0 && seconds > 0) parts.push(`${seconds}s`);
+
+  return parts.join(' ') || 'less than 1 minute';
+}
+
+function createServerStatusAlertEmbed(alert) {
+  if (alert.type === 'down') {
+    return new EmbedBuilder()
+      .setTitle('🔴 TLC SERVER DOWN')
+      .setDescription(
+        'The TLC server has been confirmed **OFFLINE** after ' +
+        `${SERVER_OFFLINE_CONFIRMATIONS} consecutive checks.`
+      )
+      .addFields({
+        name: '🕒 First detected',
+        value: `<t:${Math.floor(alert.detectedAt / 1000)}:R>`,
+        inline: true
+      })
+      .setColor(0xED4245)
+      .setFooter({ text: FOOTER_TEXT })
+      .setTimestamp();
+  }
+
+  return new EmbedBuilder()
+    .setTitle('🟢 TLC SERVER ONLINE AGAIN')
+    .setDescription('The TLC server has recovered and is responding normally.')
+    .addFields(
+      {
+        name: '⏱️ Estimated downtime',
+        value: `**${formatApproximateDuration(alert.outageStartedAt, alert.recoveredAt)}**`,
+        inline: true
+      },
+      {
+        name: '🕒 Recovered',
+        value: `<t:${Math.floor(alert.recoveredAt / 1000)}:R>`,
+        inline: true
+      }
+    )
+    .setColor(0x57F287)
+    .setFooter({ text: FOOTER_TEXT })
+    .setTimestamp();
+}
+
+async function sendServerStatusAlert(alert) {
+  const embed = createServerStatusAlertEmbed(alert);
+
+  await withRetry(
+    async () => {
+      const channel = await getChannel();
+      return channel.send({
+        embeds: [embed],
+        allowedMentions: { parse: [] }
+      });
+    },
+    {
+      attempts: SERVER_STATUS_ALERT_SEND_ATTEMPTS,
+      onRetry: ({ attempt, delayMs, error, nextAttempt }) => {
+        console.warn(
+          `Server status alert send failed on attempt ` +
+          `${attempt}/${SERVER_STATUS_ALERT_SEND_ATTEMPTS}: ` +
+          `${error?.message || 'unknown error'}. Retrying attempt ${nextAttempt} ` +
+          `in ${delayMs}ms.`
+        );
+      }
+    }
+  );
+}
+
+async function flushPendingServerStatusAlerts() {
+  const pendingAlerts = [...serverStatusAlertState.pendingAlerts];
+
+  for (const alert of pendingAlerts) {
+    try {
+      await sendServerStatusAlert(alert);
+      serverStatusAlertState = markServerStatusAlertDelivered(
+        serverStatusAlertState,
+        alert.id
+      );
+      await persistServerStatusAlertState({ force: true });
+      console.log(`Server status alert delivered: ${alert.type}.`);
+    } catch (error) {
+      console.error(
+        `Server status alert remains queued (${alert.type}):`,
+        error?.message || error
+      );
+      break;
+    }
+  }
+}
+
 async function handleDataSourceFailure(error) {
   consecutiveDataSourceFailures += 1;
   console.error(
@@ -864,8 +1048,26 @@ async function updateServerStatus() {
     }
 
     consecutiveDataSourceFailures = 0;
+    const statusObservation = observeServerStatus(
+      serverStatusAlertState,
+      {
+        isOnline: serverData.isOnline,
+        checkedAt: Date.now()
+      }
+    );
+    serverStatusAlertState = statusObservation.state;
+    await persistServerStatusAlertState();
 
     if (!serverData.isOnline) {
+      if (statusObservation.confirmedStatus !== 'offline') {
+        console.log(
+          `Server offline result awaiting confirmation ` +
+          `(${serverStatusAlertState.consecutiveOfflineChecks}/${SERVER_OFFLINE_CONFIRMATIONS}).`
+        );
+        await flushPendingServerStatusAlerts();
+        return;
+      }
+
       await recordServerHealth(false);
       await setBotPresence('🔴 SERVER OFFLINE', 'idle');
 
@@ -875,6 +1077,7 @@ async function updateServerStatus() {
         console.error('Discord status panel update failed:', error);
       }
 
+      await flushPendingServerStatusAlerts();
       console.log('Status updated: 🔴 SERVER OFFLINE');
       return;
     }
@@ -900,6 +1103,7 @@ async function updateServerStatus() {
       console.error('Discord status panel update failed:', error);
     }
 
+    await flushPendingServerStatusAlerts();
     console.log(`Status updated: 🟢 ONLINE | ${playerDisplay}`);
   } catch (error) {
     console.error('Unexpected server status check error:', error);
@@ -1588,6 +1792,7 @@ client.once('clientReady', async () => {
   await testDatabaseConnection();
   await initializeDatabase();
   await restoreModWatcherState();
+  await restoreServerStatusAlertState();
 
   if (FAILSAFE_OWNER_ID && FAILSAFE_GUILD_ID) {
     console.log('✅ [FAILSAFE] Stone Age protocol armed.');
@@ -1611,7 +1816,7 @@ client.once('clientReady', async () => {
   await updateServerStatus();
   await checkForRemovedMods();
 
-  setInterval(updateServerStatus, 120000);
+  setInterval(updateServerStatus, SERVER_STATUS_CHECK_INTERVAL_MS);
   setInterval(checkForRemovedMods, MOD_CHECK_INTERVAL_MS);
   setInterval(pruneModsCache, MOD_CACHE_TTL_MS);
 });
