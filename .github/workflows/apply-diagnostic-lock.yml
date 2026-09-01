@@ -26,21 +26,22 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
+
           p = Path('src/diagnostics.js')
           s = p.read_text()
-          old_constants = """const DIAGNOSTIC_ROLE_IDS = [
-            '1529632873987178668',
-            '1540715768625496135',
-            '1538451886758170744'
-          ];"""
-          new_constants = """const DIAGNOSTIC_OWNER_ID = '758072706099970129';
-          const DIAGNOSTIC_CHANNEL_ID = '1544238980634247189';"""
-          old_auth = """function hasDiagnosticRole(interaction) {
-            return interaction.member?.roles?.cache?.some(role =>
-              DIAGNOSTIC_ROLE_IDS.includes(role.id)
-            ) ?? false;
-          }"""
-          new_auth = """function getDiagnosticAccessError(interaction) {
+
+          s, n1 = re.subn(
+              r"const DIAGNOSTIC_ROLE_IDS = \[.*?\];",
+              "const DIAGNOSTIC_OWNER_ID = '758072706099970129';\nconst DIAGNOSTIC_CHANNEL_ID = '1544238980634247189';",
+              s,
+              count=1,
+              flags=re.S,
+          )
+
+          s, n2 = re.subn(
+              r"function hasDiagnosticRole\(interaction\) \{.*?\n\}",
+              """function getDiagnosticAccessError(interaction) {
             if (interaction.user.id !== DIAGNOSTIC_OWNER_ID) {
               return '❌ You are not authorized to use TLC Command diagnostics.';
             }
@@ -50,17 +51,15 @@ jobs:
             }
 
             return null;
-          }"""
-          old_handler = """  if (!hasDiagnosticRole(interaction)) {
-            await interaction.reply({
-              content: '❌ You do not have permission to run TLC Command diagnostics.',
-              flags: MessageFlags.Ephemeral
-            });
-            return true;
-          }
+          }""",
+              s,
+              count=1,
+              flags=re.S,
+          )
 
-          await interaction.deferReply({ flags: MessageFlags.Ephemeral });"""
-          new_handler = """  const accessError = getDiagnosticAccessError(interaction);
+          s, n3 = re.subn(
+              r"  if \(!hasDiagnosticRole\(interaction\)\) \{.*?\n  \}\n\n  await interaction\.deferReply\(\{ flags: MessageFlags\.Ephemeral \}\);",
+              """  const accessError = getDiagnosticAccessError(interaction);
           if (accessError) {
             await interaction.reply({
               content: accessError,
@@ -69,21 +68,31 @@ jobs:
             return true;
           }
 
-          await interaction.deferReply({ flags: MessageFlags.Ephemeral });"""
-          old_channel = """    [context.ADMIN_REPORT_CHANNEL_ID, 'Admin report channel']
-          ];"""
-          new_channel = """    [context.ADMIN_REPORT_CHANNEL_ID, 'Admin report channel'],
-            [DIAGNOSTIC_CHANNEL_ID, 'Diagnostics channel']
-          ];"""
-          for old, new, label in [
-              (old_constants, new_constants, 'constants'),
-              (old_auth, new_auth, 'auth function'),
-              (old_handler, new_handler, 'handler gate'),
-              (old_channel, new_channel, 'diagnostic channel check')]:
-              if old in s:
-                  s = s.replace(old, new, 1)
-              elif new not in s:
-                  raise SystemExit(f'Could not locate {label}')
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });""",
+              s,
+              count=1,
+              flags=re.S,
+          )
+
+          old_channel = "    [context.ADMIN_REPORT_CHANNEL_ID, 'Admin report channel']\n  ];"
+          new_channel = "    [context.ADMIN_REPORT_CHANNEL_ID, 'Admin report channel'],\n    [DIAGNOSTIC_CHANNEL_ID, 'Diagnostics channel']\n  ];"
+          if old_channel in s:
+              s = s.replace(old_channel, new_channel, 1)
+              n4 = 1
+          elif "[DIAGNOSTIC_CHANNEL_ID, 'Diagnostics channel']" in s:
+              n4 = 1
+          else:
+              n4 = 0
+
+          if n1 != 1 and "DIAGNOSTIC_OWNER_ID" not in s:
+              raise SystemExit('Could not update diagnostic owner constants')
+          if n2 != 1 and "getDiagnosticAccessError" not in s:
+              raise SystemExit('Could not update diagnostic access function')
+          if n3 != 1 and "const accessError = getDiagnosticAccessError(interaction);" not in s:
+              raise SystemExit('Could not update diagnostic handler gate')
+          if n4 != 1:
+              raise SystemExit('Could not add diagnostic channel check')
+
           p.write_text(s)
           PY
       - name: Syntax check
