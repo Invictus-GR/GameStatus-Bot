@@ -10,6 +10,7 @@ import {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
+  AttachmentBuilder,
   MessageFlags,
 } from 'discord.js';
 
@@ -43,6 +44,16 @@ import {
   SERVER_OFFLINE_CONFIRMATIONS,
   SERVER_STATUS_CHECK_INTERVAL_MS
 } from './serverStatusAlertState.js';
+import {
+  DAILY_REPORT_SIGNATURE,
+  DAILY_SAMPLE_INTERVAL_MINUTES,
+  DAILY_SAMPLE_RETENTION_DAYS,
+  renderDailyReportChartPng
+} from './dailyReportChart.js';
+import {
+  formatCapacityField,
+  SERVER_QUEUE_CAPACITY
+} from './statusDisplay.js';
 
 const { Pool } = pg;
 const pool = new Pool({
@@ -115,6 +126,20 @@ async function initializeDatabase() {
       );
     `);
 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS server_metric_samples (
+        sampled_at TIMESTAMPTZ PRIMARY KEY,
+        players SMALLINT NOT NULL CHECK (players BETWEEN 0 AND 128),
+        queue SMALLINT NOT NULL CHECK (queue BETWEEN 0 AND 25),
+        is_online BOOLEAN NOT NULL
+      );
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS server_metric_samples_sampled_at_idx
+      ON server_metric_samples (sampled_at);
+    `);
+
     console.log('✅ Database tables ready.');
   } catch (error) {
     console.error('❌ Failed to initialize database tables:', error);
@@ -162,6 +187,89 @@ async function recordDailyServerStats(players, queue) {
   } catch (error) {
     console.error('❌ Failed to record daily server stats:', error);
   }
+}
+
+async function recordServerMetricSample(players, queue, isOnline) {
+  try {
+    await pool.query(`
+      INSERT INTO server_metric_samples (
+        sampled_at,
+        players,
+        queue,
+        is_online
+      )
+      VALUES (
+        TO_TIMESTAMP(
+          FLOOR(EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) / $4::integer) * $4::integer
+        ),
+        $1,
+        LEAST($2, 25),
+        $3
+      )
+      ON CONFLICT (sampled_at) DO UPDATE SET
+        players = EXCLUDED.players,
+        queue = EXCLUDED.queue,
+        is_online = EXCLUDED.is_online;
+    `, [players, queue, isOnline, DAILY_SAMPLE_INTERVAL_MINUTES * 60]);
+  } catch (error) {
+    console.error('❌ Failed to record server metric sample:', error);
+  }
+}
+
+async function pruneServerMetricSamples() {
+  try {
+    await pool.query(`
+      DELETE FROM server_metric_samples
+      WHERE sampled_at < CURRENT_TIMESTAMP - ($1::integer * INTERVAL '1 day');
+    `, [DAILY_SAMPLE_RETENTION_DAYS]);
+  } catch (error) {
+    console.error('❌ Failed to prune server metric samples:', error);
+  }
+}
+
+async function getYesterdayDailyReportData() {
+  const boundsResult = await pool.query(`
+    WITH london_day AS (
+      SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London')::date AS today
+    )
+    SELECT
+      TO_CHAR(today - 1, 'YYYY-MM-DD') AS report_date,
+      ((today - 1)::timestamp AT TIME ZONE 'Europe/London') AS window_start,
+      (today::timestamp AT TIME ZONE 'Europe/London') AS window_end
+    FROM london_day;
+  `);
+  const bounds = boundsResult.rows[0];
+  const [statsResult, samplesResult] = await Promise.all([
+    pool.query(`
+      SELECT *
+      FROM daily_stats
+      WHERE report_date = $1::date
+    `, [bounds.report_date]),
+    pool.query(`
+      SELECT
+        EXTRACT(EPOCH FROM sampled_at) * 1000 AS sampled_at_ms,
+        players,
+        queue,
+        is_online
+      FROM server_metric_samples
+      WHERE sampled_at >= $1::timestamptz
+        AND sampled_at < $2::timestamptz
+      ORDER BY sampled_at ASC
+    `, [bounds.window_start, bounds.window_end])
+  ]);
+
+  return {
+    stats: statsResult.rows[0] ?? null,
+    reportDate: bounds.report_date,
+    windowStartMs: new Date(bounds.window_start).getTime(),
+    windowEndMs: new Date(bounds.window_end).getTime(),
+    samples: samplesResult.rows.map(sample => ({
+      sampledAtMs: Number(sample.sampled_at_ms),
+      players: Number(sample.players),
+      queue: Number(sample.queue),
+      isOnline: sample.is_online
+    }))
+  };
 }
 
 async function recordDailyModRemoval(removedCount, activeMods) {
@@ -337,19 +445,14 @@ function formatDuration(totalSeconds) {
 
 async function sendDailyReport() {
   try {
-    const result = await pool.query(`
-      SELECT *
-      FROM daily_stats
-      WHERE report_date =
-        (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London')::date - 1
-    `);
+    const reportData = await getYesterdayDailyReportData();
 
-    if (result.rows.length === 0) {
+    if (!reportData.stats) {
       console.log('No daily stats found for yesterday.');
       return;
     }
 
-    const stats = result.rows[0];
+    const stats = reportData.stats;
     const averagePlayers = Number(stats.player_samples) > 0
       ? Math.round(Number(stats.player_sum) / Number(stats.player_samples))
       : 0;
@@ -412,12 +515,26 @@ async function sendDailyReport() {
         }
       )
       .setColor(0x5865F2)
-      .setFooter({
-        text: 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC'
-      })
+      .setFooter({ text: DAILY_REPORT_SIGNATURE })
       .setTimestamp();
 
-    await channel.send({ embeds: [embed] });
+    const files = [];
+
+    try {
+      const chartPng = await renderDailyReportChartPng(reportData);
+      files.push(new AttachmentBuilder(chartPng, {
+        name: 'tlc-daily-report.png'
+      }));
+      embed.setImage('attachment://tlc-daily-report.png');
+    } catch (chartError) {
+      console.error(
+        'Daily report chart render failed; sending report without chart:',
+        chartError
+      );
+    }
+
+    await channel.send({ embeds: [embed], files });
+    await pruneServerMetricSamples();
     console.log('✅ Daily operations report sent.');
   } catch (error) {
     console.error('❌ Failed to send daily report:', error);
@@ -438,7 +555,7 @@ const GENERAL_CHANNEL_ID = '1544098271922884739';
 const MOD_REMOVALS_CHANNEL_ID = '1543567256024252496';
 const MOD_ADDED_CHANNEL_ID = '1544028029607612566';
 const ADMIN_REPORT_CHANNEL_ID = '1530535429491916810';
-const FOOTER_TEXT = 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC';
+const FOOTER_TEXT = DAILY_REPORT_SIGNATURE;
 const ARMAHQ_TIMEOUT_MS = 10000;
 const SERVER_STATUS_ALERT_SEND_ATTEMPTS = 3;
 const MODS_PER_PAGE = 20;
@@ -848,7 +965,13 @@ async function setBotPresence(name, status) {
   }
 }
 
-async function renderStatusPanel({ state, playerDisplay = null }) {
+async function renderStatusPanel({
+  state,
+  players = null,
+  maxPlayers = null,
+  queue = 0,
+  activeMods = null
+}) {
   const channel = await getChannel();
   const guildIcon = channel.guild?.iconURL({ extension: 'png', size: 256 });
   const embed = new EmbedBuilder()
@@ -861,13 +984,23 @@ async function renderStatusPanel({ state, playerDisplay = null }) {
       .setDescription('### 🟢 SERVER ONLINE')
       .addFields(
         {
-          name: '👥 Players',
-          value: `**${playerDisplay}**`,
-          inline: true
+          name: '👥 Player Capacity',
+          value: formatCapacityField(players, maxPlayers),
+          inline: false
+        },
+        {
+          name: '⏳ Queue Capacity',
+          value: formatCapacityField(queue, SERVER_QUEUE_CAPACITY),
+          inline: false
         },
         {
           name: '📡 Status',
           value: '**ONLINE**',
+          inline: true
+        },
+        {
+          name: '📦 Active Mods',
+          value: activeMods === null ? '**Updating…**' : `**${activeMods}**`,
           inline: true
         }
       )
@@ -1069,6 +1202,7 @@ async function updateServerStatus() {
       }
 
       await recordServerHealth(false);
+      await recordServerMetricSample(0, 0, false);
       await setBotPresence('🔴 SERVER OFFLINE', 'idle');
 
       try {
@@ -1094,11 +1228,18 @@ async function updateServerStatus() {
     }
 
     await recordDailyServerStats(players, queue);
+    await recordServerMetricSample(players, queue, true);
     await recordServerHealth(true);
     await setBotPresence(`🟢 ONLINE | ${playerDisplay}`, 'online');
 
     try {
-      await renderStatusPanel({ state: 'online', playerDisplay });
+      await renderStatusPanel({
+        state: 'online',
+        players,
+        maxPlayers,
+        queue,
+        activeMods: previousModSnapshot?.size ?? null
+      });
     } catch (error) {
       console.error('Discord status panel update failed:', error);
     }
@@ -1646,7 +1787,9 @@ client.on('interactionCreate', async interaction => {
         GENERAL_CHANNEL_ID,
         MOD_REMOVALS_CHANNEL_ID,
         MOD_ADDED_CHANNEL_ID,
-        ADMIN_REPORT_CHANNEL_ID
+        ADMIN_REPORT_CHANNEL_ID,
+        getYesterdayDailyReportData,
+        renderDailyReportChartPng
       });
       return;
     }
@@ -1791,6 +1934,7 @@ client.on('guildMemberRemove', async member => {
 client.once('clientReady', async () => {
   await testDatabaseConnection();
   await initializeDatabase();
+  await pruneServerMetricSamples();
   await restoreModWatcherState();
   await restoreServerStatusAlertState();
 

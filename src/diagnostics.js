@@ -1,5 +1,6 @@
 import {
   ActionRowBuilder,
+  AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
@@ -12,6 +13,11 @@ import {
   observeServerStatus,
   SERVER_OFFLINE_CONFIRMATIONS
 } from './serverStatusAlertState.js';
+import { DAILY_REPORT_SIGNATURE } from './dailyReportChart.js';
+import {
+  formatCapacityField,
+  SERVER_QUEUE_CAPACITY
+} from './statusDisplay.js';
 
 const DIAGNOSTIC_OWNER_ID = '758072706099970129';
 const DIAGNOSTIC_CHANNEL_ID = '1544238980634247189';
@@ -235,15 +241,19 @@ function buildChangelogPreview() {
     .setTimestamp();
 }
 
-function buildDailyPreview(stats = {}) {
-  return new EmbedBuilder()
+function buildDailyPreview(stats = {}, { withChart = false } = {}) {
+  const averagePlayers = Number(stats.player_samples) > 0
+    ? Math.round(Number(stats.player_sum) / Number(stats.player_samples))
+    : 0;
+  const preview = new EmbedBuilder()
     .setTitle('📊 TLC DAILY OPERATIONS REPORT')
+    .setDescription('**TEST PREVIEW** • Nothing was posted to the admin channel.')
     .addFields(
       {
         name: '👥 PLAYER ACTIVITY',
         value:
           `Peak Players: **${stats.peak_players ?? 0}/128**\n` +
-          `Samples: **${stats.player_samples ?? 0}**\n` +
+          `Average Players: **${averagePlayers}**\n` +
           `Peak Queue: **${stats.peak_queue ?? 0}/25**`,
         inline: false
       },
@@ -264,8 +274,14 @@ function buildDailyPreview(stats = {}) {
       }
     )
     .setColor(0x5865F2)
-    .setFooter({ text: 'TEST PREVIEW • No report was posted' })
+    .setFooter({ text: DAILY_REPORT_SIGNATURE })
     .setTimestamp();
+
+  if (withChart) {
+    preview.setImage('attachment://tlc-daily-report-preview.png');
+  }
+
+  return preview;
 }
 
 async function fetchTextChannel(client, id, label) {
@@ -297,14 +313,20 @@ async function testDatabase(pool) {
       SELECT table_name
       FROM information_schema.tables
       WHERE table_schema = 'public'
-        AND table_name IN ('daily_stats', 'mod_watcher_state', 'server_health_state')
+        AND table_name IN (
+          'daily_stats',
+          'mod_watcher_state',
+          'server_health_state',
+          'server_metric_samples'
+        )
       ORDER BY table_name
     `);
     const names = tables.rows.map(row => row.table_name);
     const requiredTables = [
       'daily_stats',
       'mod_watcher_state',
-      'server_health_state'
+      'server_health_state',
+      'server_metric_samples'
     ];
     const missing = requiredTables.filter(name => !names.includes(name));
     results.push(
@@ -472,6 +494,10 @@ async function testPermissions(context) {
       needed.push(['History', PermissionFlagsBits.ReadMessageHistory]);
     }
 
+    if (label === 'Admin report channel') {
+      needed.push(['Files', PermissionFlagsBits.AttachFiles]);
+    }
+
     const missing = needed
       .filter(([, bit]) => !permissions.has(bit))
       .map(([name]) => name);
@@ -542,6 +568,21 @@ async function testStatus(context) {
     testRow.toJSON();
     results.push(pass('Status render dry-run', 'Embed and button row serialize correctly.'));
 
+    if (parsed.isOnline) {
+      const playerCapacity = formatCapacityField(parsed.players, parsed.maxPlayers);
+      const queueCapacity = formatCapacityField(parsed.queue, SERVER_QUEUE_CAPACITY);
+      const capacityBarsValid = [playerCapacity, queueCapacity].every(value =>
+        value.includes('```') && value.includes('%')
+      );
+      results.push(
+        capacityBarsValid
+          ? pass('Status capacity bars', 'Player and queue bars render with values and percentages.')
+          : fail('Status capacity bars', 'Player or queue capacity output is invalid.')
+      );
+    } else {
+      results.push(warn('Status capacity bars', 'Live server is offline; online capacity preview was skipped.'));
+    }
+
     let alertState = createServerStatusAlertState();
     let alertResult;
     const startedAt = Date.now();
@@ -607,21 +648,33 @@ async function testDaily(context) {
   results.push(checked.result);
 
   try {
-    const query = await context.pool.query(`
-      SELECT *
-      FROM daily_stats
-      WHERE report_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London')::date - 1
-    `);
+    const reportData = await context.getYesterdayDailyReportData();
 
-    if (query.rows.length) {
+    if (reportData.stats) {
       results.push(pass('Yesterday daily stats', 'Daily-report source row exists.'));
-      buildDailyPreview(query.rows[0]).toJSON();
+      buildDailyPreview(reportData.stats).toJSON();
     } else {
       results.push(warn('Yesterday daily stats', 'No row exists yet; this is valid when no stats were recorded yesterday.'));
       buildDailyPreview().toJSON();
     }
 
-    results.push(pass('Daily report render', 'Dry-run report embed serializes correctly.'));
+    results.push(
+      reportData.samples.length > 0
+        ? pass('Historical samples', `${reportData.samples.length} five-minute sample(s) loaded.`)
+        : warn('Historical samples', 'No chart samples exist yet for yesterday.')
+    );
+
+    const chartBuffer = await context.renderDailyReportChartPng(reportData);
+    const isPng = Buffer.isBuffer(chartBuffer) &&
+      chartBuffer.length > 8 &&
+      chartBuffer.subarray(1, 4).toString() === 'PNG';
+    results.push(
+      isPng
+        ? pass('Daily chart render', `${chartBuffer.length.toLocaleString()}-byte PNG rendered correctly.`)
+        : fail('Daily chart render', 'Chart renderer did not return a valid PNG.')
+    );
+
+    results.push(pass('Daily report render', 'Embed and PNG attachment serialize correctly.'));
     results.push(pass('Daily report safety', 'No report was posted during this test.'));
   } catch (error) {
     results.push(fail('Daily report diagnostics', error.message));
@@ -764,12 +817,19 @@ async function runAll(context) {
   return results;
 }
 
-async function editDiagnosticReply(interaction, title, results, extraEmbeds = []) {
+async function editDiagnosticReply(
+  interaction,
+  title,
+  results,
+  extraEmbeds = [],
+  files = []
+) {
   const embed = createResultsEmbed(title, results);
   await interaction.editReply({
     content: '',
     embeds: [embed, ...extraEmbeds].slice(0, 10),
-    components: []
+    components: [],
+    files
   });
 }
 
@@ -869,22 +929,27 @@ await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   if (subcommand === 'daily') {
     const results = await testDaily(context);
-    let stats = {};
+    let reportData = null;
+    let chartBuffer = null;
     try {
-      const query = await context.pool.query(`
-        SELECT *
-        FROM daily_stats
-        WHERE report_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London')::date - 1
-      `);
-      stats = query.rows[0] ?? {};
+      reportData = await context.getYesterdayDailyReportData();
+      chartBuffer = await context.renderDailyReportChartPng(reportData);
     } catch {
       // The diagnostic results already contain the DB failure.
     }
+    const files = chartBuffer
+      ? [new AttachmentBuilder(chartBuffer, {
+          name: 'tlc-daily-report-preview.png'
+        })]
+      : [];
     await editDiagnosticReply(
       interaction,
       '📊 DAILY REPORT TEST',
       results,
-      [buildDailyPreview(stats)]
+      [buildDailyPreview(reportData?.stats ?? {}, {
+        withChart: Boolean(chartBuffer)
+      })],
+      files
     );
     return true;
   }
