@@ -1,9 +1,33 @@
+import { access } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+
 export const DAILY_CHART_WIDTH = 1200;
 export const DAILY_CHART_HEIGHT = 720;
 export const DAILY_SAMPLE_INTERVAL_MINUTES = 5;
 export const DAILY_SAMPLE_RETENTION_DAYS = 8;
 export const DAILY_REPORT_SIGNATURE =
   'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC';
+
+const FONTCONFIG_DIRECTORY = fileURLToPath(
+  new URL('../assets/fontconfig', import.meta.url)
+);
+const DAILY_CHART_FONT_FILE = fileURLToPath(
+  new URL(
+    '../node_modules/dejavu-fonts-ttf/ttf/DejaVuSans.ttf',
+    import.meta.url
+  )
+);
+
+export function configureDailyChartFonts(environment = process.env) {
+  environment.FONTCONFIG_PATH = FONTCONFIG_DIRECTORY;
+  environment.FONTCONFIG_FILE = 'fonts.conf';
+
+  return {
+    fontconfigPath: environment.FONTCONFIG_PATH,
+    fontconfigFile: environment.FONTCONFIG_FILE,
+    fontFile: DAILY_CHART_FONT_FILE
+  };
+}
 
 function escapeXml(value) {
   return String(value)
@@ -210,6 +234,8 @@ export async function renderDailyReportChartPng(data, { sharpFactory = null } = 
   let createSharp = sharpFactory;
 
   if (!createSharp) {
+    const fontConfiguration = configureDailyChartFonts();
+    await access(fontConfiguration.fontFile);
     const sharpModule = await import('sharp');
     createSharp = sharpModule.default;
   }
