@@ -1,0 +1,52 @@
+name: Fix Diagnostic Permission Check
+
+on:
+  push:
+    branches: [diagnostic-permission-fix-2026-09-01]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: diagnostic-permission-fix-2026-09-01
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@10.5.2 --activate
+      - run: pnpm install --no-frozen-lockfile
+      - name: Remove unnecessary Manage Messages requirement
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/diagnostics.js')
+          s = p.read_text()
+          old = """    if (label === 'General / queue channel') {
+              needed.push(['Manage Messages', PermissionFlagsBits.ManageMessages]);
+            }
+
+          """
+          if old not in s:
+              raise SystemExit('Manage Messages diagnostic block not found')
+          p.write_text(s.replace(old, '', 1))
+          PY
+      - name: Validate source
+        run: |
+          node --check src/bot.js
+          node --check src/diagnostics.js
+          ! grep -q "needed.push(\['Manage Messages'" src/diagnostics.js
+          test "$(grep -c "client.on('interactionCreate'" src/bot.js)" -eq 1
+      - name: Commit fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/diagnostics.js
+          git commit -m 'Fix diagnostic queue permission check'
+          git push origin HEAD:diagnostic-permission-fix-2026-09-01
