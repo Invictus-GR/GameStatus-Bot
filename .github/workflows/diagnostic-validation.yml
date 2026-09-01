@@ -1,0 +1,47 @@
+name: Diagnostic Suite Validation
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: corepack enable
+      - run: corepack prepare pnpm@10.5.2 --activate
+      - run: pnpm install --no-frozen-lockfile
+      - name: Syntax check
+        run: |
+          node --check src/bot.js
+          node --check src/diagnostics.js
+      - name: Validate slash command schema
+        run: |
+          node --input-type=module <<'EOF'
+          import { diagnosticCommand } from './src/diagnostics.js';
+          const json = diagnosticCommand.toJSON();
+          if (json.name !== 'test') throw new Error('Expected /test command');
+          const expected = ['all','queue','mods','database','armahq','status','channels','permissions','warn','changelog','daily','failsafe'];
+          const actual = (json.options || []).map(option => option.name);
+          for (const name of expected) {
+            if (!actual.includes(name)) throw new Error(`Missing /test ${name}`);
+          }
+          console.log('Validated /test subcommands:', actual.join(', '));
+          EOF
+      - name: Validate single interaction listener
+        run: |
+          count=$(grep -c "client.on('interactionCreate'" src/bot.js)
+          test "$count" -eq 1
+      - name: Validate safe dry-run markers
+        run: |
+          grep -q "No DM was sent" src/diagnostics.js
+          grep -q "No mention was sent" src/diagnostics.js
+          grep -q "Trigger was NOT executed" src/diagnostics.js
+          grep -q "nothing posted to General" src/diagnostics.js
