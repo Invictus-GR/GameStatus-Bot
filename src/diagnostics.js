@@ -445,10 +445,6 @@ async function testPermissions(context) {
       needed.push(['History', PermissionFlagsBits.ReadMessageHistory]);
     }
 
-    if (label === 'General / queue channel') {
-      needed.push(['Manage Messages', PermissionFlagsBits.ManageMessages]);
-    }
-
     const missing = needed
       .filter(([, bit]) => !permissions.has(bit))
       .map(([name]) => name);
