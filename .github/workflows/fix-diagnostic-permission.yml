@@ -26,16 +26,14 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
           p = Path('src/diagnostics.js')
           s = p.read_text()
-          old = """    if (label === 'General / queue channel') {
-              needed.push(['Manage Messages', PermissionFlagsBits.ManageMessages]);
-            }
-
-          """
-          if old not in s:
+          pattern = r"\n\s*if \(label === 'General / queue channel'\) \{\n\s*needed\.push\(\['Manage Messages', PermissionFlagsBits\.ManageMessages\]\);\n\s*\}\n"
+          updated, count = re.subn(pattern, '\n', s, count=1)
+          if count != 1:
               raise SystemExit('Manage Messages diagnostic block not found')
-          p.write_text(s.replace(old, '', 1))
+          p.write_text(updated)
           PY
       - name: Validate source
         run: |
