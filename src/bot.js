@@ -17,6 +17,10 @@ import fetch from 'node-fetch';
 import cron from 'node-cron';
 import pg from 'pg';
 import { diagnosticCommand, handleDiagnosticCommand } from './diagnostics.js';
+import {
+  assessMassRemovalSnapshot,
+  MOD_MASS_REMOVAL_CONFIRMATIONS
+} from './modSnapshotGuard.js';
 
 const { Pool } = pg;
 const pool = new Pool({
@@ -410,6 +414,7 @@ const QUEUE_ALERT_TITLES = new Set([
 
 let previousModSnapshot = null;
 const pendingRemovedMods = new Map();
+let massRemovalCandidate = null;
 let consecutiveDataSourceFailures = 0;
 let statusCheckRunning = false;
 let modCheckRunning = false;
@@ -1023,17 +1028,43 @@ async function checkForRemovedMods() {
       return;
     }
 
-    await recordDailyModCheck(currentMods.length);
-
     const currentSnapshot = new Map(
       currentMods.map(mod => [mod.modId, mod])
     );
 
     if (!previousModSnapshot) {
+      await recordDailyModCheck(currentMods.length);
       previousModSnapshot = currentSnapshot;
       console.log(`Mod removal watcher initialized with ${currentMods.length} mods.`);
       return;
     }
+
+    const massRemovalAssessment = assessMassRemovalSnapshot(
+      previousModSnapshot,
+      currentSnapshot,
+      massRemovalCandidate
+    );
+    massRemovalCandidate = massRemovalAssessment.candidate;
+
+    if (!massRemovalAssessment.accept) {
+      const percentage = Math.round(massRemovalAssessment.missingRatio * 100);
+      console.warn(
+        `Mass mod-removal guard blocked a suspicious snapshot: ` +
+        `${massRemovalAssessment.missingCount}/${previousModSnapshot.size} mods missing ` +
+        `(${percentage}%). Waiting for confirmation ` +
+        `${massRemovalAssessment.confirmations}/${MOD_MASS_REMOVAL_CONFIRMATIONS}.`
+      );
+      return;
+    }
+
+    if (massRemovalAssessment.confirmed) {
+      console.warn(
+        `Mass mod-removal snapshot confirmed after ` +
+        `${MOD_MASS_REMOVAL_CONFIRMATIONS} identical checks; continuing with normal removal confirmation.`
+      );
+    }
+
+    await recordDailyModCheck(currentMods.length);
 
     const removedMods = [];
     const addedMods = [];
