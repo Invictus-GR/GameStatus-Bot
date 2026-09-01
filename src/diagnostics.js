@@ -8,11 +8,8 @@ import {
   SlashCommandBuilder
 } from 'discord.js';
 
-const DIAGNOSTIC_ROLE_IDS = [
-  '1529632873987178668',
-  '1540715768625496135',
-  '1538451886758170744'
-];
+const DIAGNOSTIC_OWNER_ID = '758072706099970129';
+const DIAGNOSTIC_CHANNEL_ID = '1544238980634247189';
 
 const REQUIRED_ENV_VARS = [
   'DISCORD_BOT_TOKEN',
@@ -98,10 +95,16 @@ export const diagnosticCommand = new SlashCommandBuilder()
       .setDescription('Safely verify failsafe configuration without triggering it')
   );
 
-function hasDiagnosticRole(interaction) {
-  return interaction.member?.roles?.cache?.some(role =>
-    DIAGNOSTIC_ROLE_IDS.includes(role.id)
-  ) ?? false;
+function getDiagnosticAccessError(interaction) {
+  if (interaction.user.id !== DIAGNOSTIC_OWNER_ID) {
+    return '❌ You are not authorized to use TLC Command diagnostics.';
+  }
+
+  if (interaction.channelId !== DIAGNOSTIC_CHANNEL_ID) {
+    return `❌ Diagnostics can only be used in <#${DIAGNOSTIC_CHANNEL_ID}>.`;
+  }
+
+  return null;
 }
 
 function pass(name, details = 'OK') {
@@ -391,7 +394,8 @@ async function testChannels(context) {
     [context.GENERAL_CHANNEL_ID, 'General / queue channel'],
     [context.MOD_REMOVALS_CHANNEL_ID, 'Mod removals channel'],
     [context.MOD_ADDED_CHANNEL_ID, 'Mod added channel'],
-    [context.ADMIN_REPORT_CHANNEL_ID, 'Admin report channel']
+    [context.ADMIN_REPORT_CHANNEL_ID, 'Admin report channel'],
+    [DIAGNOSTIC_CHANNEL_ID, 'Diagnostics channel']
   ];
 
   const results = [];
@@ -730,15 +734,16 @@ export async function handleDiagnosticCommand(interaction, context) {
     return false;
   }
 
-  if (!hasDiagnosticRole(interaction)) {
-    await interaction.reply({
-      content: '❌ You do not have permission to run TLC Command diagnostics.',
-      flags: MessageFlags.Ephemeral
-    });
-    return true;
-  }
+  const accessError = getDiagnosticAccessError(interaction);
+if (accessError) {
+  await interaction.reply({
+    content: accessError,
+    flags: MessageFlags.Ephemeral
+  });
+  return true;
+}
 
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const subcommand = interaction.options.getSubcommand();
 
