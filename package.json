@@ -1,9 +1,12 @@
 {
 	"name": "gamestatus-bot",
-	"version": "1.1.0",
+	"version": "1.2.0",
 	"description": "Stay in the loop with our Discord bot for instant server status updates!",
 	"main": "src/bot.js",
 	"type": "module",
+	"engines": {
+		"node": ">=20.9.0"
+	},
 	"scripts": {
 		"start": "node src/bot.js",
 		"dev": "nodemon src/bot.js",
@@ -31,6 +34,7 @@
 		"gamedig": "^5.2.0",
 		"pg": "^8.23.0",
 		"node-cron": "^4.6.0",
-		"node-fetch": "^3.3.2"
+		"node-fetch": "^3.3.2",
+		"sharp": "^0.35.0"
 	}
 }
