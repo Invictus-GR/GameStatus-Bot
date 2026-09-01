@@ -292,11 +292,16 @@ async function testDatabase(pool) {
       SELECT table_name
       FROM information_schema.tables
       WHERE table_schema = 'public'
-        AND table_name IN ('daily_stats', 'server_health_state')
+        AND table_name IN ('daily_stats', 'mod_watcher_state', 'server_health_state')
       ORDER BY table_name
     `);
     const names = tables.rows.map(row => row.table_name);
-    const missing = ['daily_stats', 'server_health_state'].filter(name => !names.includes(name));
+    const requiredTables = [
+      'daily_stats',
+      'mod_watcher_state',
+      'server_health_state'
+    ];
+    const missing = requiredTables.filter(name => !names.includes(name));
     results.push(
       missing.length
         ? fail('Database tables', `Missing: ${missing.join(', ')}`)

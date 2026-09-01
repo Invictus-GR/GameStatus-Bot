@@ -17,6 +17,23 @@ import fetch from 'node-fetch';
 import cron from 'node-cron';
 import pg from 'pg';
 import { diagnosticCommand, handleDiagnosticCommand } from './diagnostics.js';
+import {
+  flushRetryQueue,
+  getModAlertKey,
+  MOD_ALERT_SEND_ATTEMPTS,
+  withRetry
+} from './modAlertRetry.js';
+import {
+  advancePendingRemovals,
+  assessMassRemovalSnapshot,
+  MOD_CHECK_INTERVAL_MS,
+  MOD_MASS_REMOVAL_CONFIRMATIONS,
+  MOD_REMOVAL_CONFIRMATIONS
+} from './modSnapshotGuard.js';
+import {
+  deserializeModWatcherState,
+  serializeModWatcherState
+} from './modWatcherState.js';
 
 const { Pool } = pg;
 const pool = new Pool({
@@ -75,9 +92,17 @@ async function initializeDatabase() {
       );
     `);
 
-    console.log('✅ Daily stats table ready.');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS mod_watcher_state (
+        id SMALLINT PRIMARY KEY CHECK (id = 1),
+        state JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    console.log('✅ Database tables ready.');
   } catch (error) {
-    console.error('❌ Failed to initialize daily stats table:', error);
+    console.error('❌ Failed to initialize database tables:', error);
   }
 }
 
@@ -409,7 +434,10 @@ const QUEUE_ALERT_TITLES = new Set([
 ]);
 
 let previousModSnapshot = null;
-const pendingRemovedMods = new Map();
+let pendingRemovedMods = new Map();
+let massRemovalCandidate = null;
+const pendingModAlerts = new Map();
+let lastPersistedModWatcherState = null;
 let consecutiveDataSourceFailures = 0;
 let statusCheckRunning = false;
 let modCheckRunning = false;
@@ -421,6 +449,76 @@ class ArmaHQError extends Error {
     super(message);
     this.name = 'ArmaHQError';
     this.cause = cause;
+  }
+}
+
+function getCurrentModWatcherState() {
+  return serializeModWatcherState({
+    previousModSnapshot,
+    pendingRemovedMods,
+    massRemovalCandidate,
+    pendingModAlerts
+  });
+}
+
+async function persistModWatcherState({ force = false } = {}) {
+  const state = getCurrentModWatcherState();
+  const serializedState = JSON.stringify(state);
+
+  if (!force && serializedState === lastPersistedModWatcherState) {
+    return false;
+  }
+
+  try {
+    await pool.query(`
+      INSERT INTO mod_watcher_state (id, state, updated_at)
+      VALUES (1, $1::jsonb, NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        state = EXCLUDED.state,
+        updated_at = NOW();
+    `, [serializedState]);
+
+    lastPersistedModWatcherState = serializedState;
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to persist mod watcher state:', error);
+    return false;
+  }
+}
+
+async function restoreModWatcherState() {
+  try {
+    const result = await pool.query(`
+      SELECT state
+      FROM mod_watcher_state
+      WHERE id = 1
+    `);
+
+    if (result.rows.length === 0) {
+      console.log('No persisted mod watcher state found; a fresh snapshot will be created.');
+      return false;
+    }
+
+    const restored = deserializeModWatcherState(result.rows[0].state);
+    previousModSnapshot = restored.previousModSnapshot;
+    pendingRemovedMods = restored.pendingRemovedMods;
+    massRemovalCandidate = restored.massRemovalCandidate;
+    pendingModAlerts.clear();
+
+    for (const [key, alert] of restored.pendingModAlerts) {
+      pendingModAlerts.set(key, alert);
+    }
+
+    lastPersistedModWatcherState = JSON.stringify(getCurrentModWatcherState());
+    console.log(
+      `Restored mod watcher state: ${previousModSnapshot?.size ?? 0} active mods, ` +
+      `${pendingRemovedMods.size} pending removal(s), ` +
+      `${pendingModAlerts.size} queued alert(s).`
+    );
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to restore mod watcher state:', error);
+    return false;
   }
 }
 
@@ -1007,6 +1105,95 @@ async function fetchServerMods() {
   );
 }
 
+function createModAlertPayload(alert) {
+  const isRemoval = alert.type === 'removed';
+  const sortedMods = [...alert.mods].sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
+  const modList = sortedMods
+    .map(mod => `• **${mod.name}**`)
+    .join('\n');
+  const embed = new EmbedBuilder()
+    .setTitle(
+      isRemoval
+        ? sortedMods.length === 1
+          ? '🗑️ TLC MOD REMOVED'
+          : '🗑️ TLC MODS REMOVED'
+        : sortedMods.length === 1
+          ? '➕ TLC MOD ADDED'
+          : '➕ TLC MODS ADDED'
+    )
+    .setDescription(
+      `The following ${sortedMods.length === 1 ? 'mod has' : 'mods have'} been ` +
+      `${isRemoval ? 'removed from' : 'added to'} the server:\n\n${modList}`
+    )
+    .addFields({
+      name: '📦 Current Active Mods',
+      value: `${alert.activeMods}`,
+      inline: true
+    })
+    .setColor(isRemoval ? 0xED4245 : 0x57F287)
+    .setFooter({ text: FOOTER_TEXT })
+    .setTimestamp();
+
+  return {
+    content: '@everyone',
+    embeds: [embed],
+    allowedMentions: { parse: ['everyone'] }
+  };
+}
+
+async function sendModAlert(alert) {
+  const isRemoval = alert.type === 'removed';
+  const channelId = isRemoval
+    ? MOD_REMOVALS_CHANNEL_ID
+    : MOD_ADDED_CHANNEL_ID;
+  const label = isRemoval ? 'Mod removal' : 'Mod added';
+  const payload = createModAlertPayload(alert);
+
+  await withRetry(
+    async () => {
+      const channel = await client.channels.fetch(channelId);
+
+      if (!channel || !channel.isTextBased()) {
+        throw new Error(`${label} channel not found or is not text-based.`);
+      }
+
+      return channel.send(payload);
+    },
+    {
+      onRetry: ({ attempt, delayMs, error, nextAttempt }) => {
+        console.warn(
+          `${label} alert send failed on attempt ${attempt}/${MOD_ALERT_SEND_ATTEMPTS}: ` +
+          `${error?.message || 'unknown error'}. Retrying attempt ${nextAttempt} ` +
+          `in ${delayMs}ms.`
+        );
+      }
+    }
+  );
+
+  if (isRemoval) {
+    await recordDailyModRemoval(alert.mods.length, alert.activeMods);
+  }
+
+  console.log(`${label} alert sent for ${alert.mods.length} mod(s).`);
+}
+
+async function retryPendingModAlerts() {
+  if (pendingModAlerts.size === 0) return false;
+
+  console.warn(`Retrying ${pendingModAlerts.size} queued mod alert(s).`);
+  const results = await flushRetryQueue(pendingModAlerts, sendModAlert);
+
+  for (const result of results) {
+    if (!result.delivered) {
+      console.error('Queued mod alert is still pending:', result.error);
+    }
+  }
+
+  return true;
+}
+
 async function checkForRemovedMods() {
   if (modCheckRunning) {
     console.warn('Mod check skipped: previous check is still running.');
@@ -1016,6 +1203,10 @@ async function checkForRemovedMods() {
   modCheckRunning = true;
 
   try {
+    if (await retryPendingModAlerts()) {
+      await persistModWatcherState();
+    }
+
     const currentMods = await fetchServerMods();
 
     if (!currentMods.length) {
@@ -1023,37 +1214,60 @@ async function checkForRemovedMods() {
       return;
     }
 
-    await recordDailyModCheck(currentMods.length);
-
     const currentSnapshot = new Map(
       currentMods.map(mod => [mod.modId, mod])
     );
 
     if (!previousModSnapshot) {
+      await recordDailyModCheck(currentMods.length);
       previousModSnapshot = currentSnapshot;
+      await persistModWatcherState();
       console.log(`Mod removal watcher initialized with ${currentMods.length} mods.`);
       return;
     }
 
-    const removedMods = [];
+    const massRemovalAssessment = assessMassRemovalSnapshot(
+      previousModSnapshot,
+      currentSnapshot,
+      massRemovalCandidate
+    );
+    massRemovalCandidate = massRemovalAssessment.candidate;
+
+    if (!massRemovalAssessment.accept) {
+      const percentage = Math.round(massRemovalAssessment.missingRatio * 100);
+      console.warn(
+        `Mass mod-removal guard blocked a suspicious snapshot: ` +
+        `${massRemovalAssessment.missingCount}/${previousModSnapshot.size} mods missing ` +
+        `(${percentage}%). Waiting for confirmation ` +
+        `${massRemovalAssessment.confirmations}/${MOD_MASS_REMOVAL_CONFIRMATIONS}.`
+      );
+      await persistModWatcherState();
+      return;
+    }
+
+    if (massRemovalAssessment.confirmed) {
+      console.warn(
+        `Mass mod-removal snapshot confirmed after ` +
+        `${MOD_MASS_REMOVAL_CONFIRMATIONS} identical checks; continuing with normal removal confirmation.`
+      );
+    }
+
+    await recordDailyModCheck(currentMods.length);
+
     const addedMods = [];
-    const recoveredPendingRemovals = new Set();
-
-    for (const [modId, mod] of pendingRemovedMods) {
-      if (!currentSnapshot.has(modId)) {
-        removedMods.push(mod);
-        pendingRemovedMods.delete(modId);
-      } else {
-        recoveredPendingRemovals.add(modId);
-        pendingRemovedMods.delete(modId);
+    const removalConfirmation = advancePendingRemovals(
+      previousModSnapshot,
+      currentSnapshot,
+      pendingRemovedMods,
+      {
+        initialConfirmations: massRemovalAssessment.confirmed
+          ? MOD_MASS_REMOVAL_CONFIRMATIONS
+          : 1,
+        requiredConfirmations: MOD_REMOVAL_CONFIRMATIONS
       }
-    }
-
-    for (const [modId, mod] of previousModSnapshot) {
-      if (!currentSnapshot.has(modId) && !pendingRemovedMods.has(modId)) {
-        pendingRemovedMods.set(modId, mod);
-      }
-    }
+    );
+    pendingRemovedMods = removalConfirmation.pendingRemovals;
+    const { recoveredPendingRemovals, removedMods } = removalConfirmation;
 
     for (const [modId, mod] of currentSnapshot) {
       if (
@@ -1067,87 +1281,35 @@ async function checkForRemovedMods() {
     previousModSnapshot = currentSnapshot;
 
     if (removedMods.length === 0 && addedMods.length === 0) {
+      await persistModWatcherState();
       return;
     }
 
+    const alerts = [];
+
     if (removedMods.length > 0) {
-      const channel = await client.channels.fetch(MOD_REMOVALS_CHANNEL_ID);
-
-      if (!channel || !channel.isTextBased()) {
-        console.error('Mod removals channel not found.');
-      } else {
-        const removedList = removedMods
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .map(mod => `• **${mod.name}**`)
-          .join('\n');
-
-        const embed = new EmbedBuilder()
-          .setTitle(
-            removedMods.length === 1
-              ? '🗑️ TLC MOD REMOVED'
-              : '🗑️ TLC MODS REMOVED'
-          )
-          .setDescription(
-            `The following ${removedMods.length === 1 ? 'mod has' : 'mods have'} been removed from the server:\n\n${removedList}`
-          )
-          .addFields({
-            name: '📦 Current Active Mods',
-            value: `${currentMods.length}`,
-            inline: true
-          })
-          .setColor(0xED4245)
-          .setFooter({ text: FOOTER_TEXT })
-          .setTimestamp();
-
-        await channel.send({
-          content: '@everyone',
-          embeds: [embed],
-          allowedMentions: { parse: ['everyone'] }
-        });
-
-        await recordDailyModRemoval(removedMods.length, currentMods.length);
-        console.log(`Mod removal alert sent for ${removedMods.length} mod(s).`);
-      }
+      alerts.push({
+        type: 'removed',
+        mods: removedMods,
+        activeMods: currentMods.length
+      });
     }
 
     if (addedMods.length > 0) {
-      const addedChannel = await client.channels.fetch(MOD_ADDED_CHANNEL_ID);
-
-      if (!addedChannel || !addedChannel.isTextBased()) {
-        console.error('Mods added channel not found.');
-      } else {
-        const addedList = addedMods
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .map(mod => `• **${mod.name}**`)
-          .join('\n');
-
-        const addedEmbed = new EmbedBuilder()
-          .setTitle(
-            addedMods.length === 1
-              ? '➕ TLC MOD ADDED'
-              : '➕ TLC MODS ADDED'
-          )
-          .setDescription(
-            `The following ${addedMods.length === 1 ? 'mod has' : 'mods have'} been added to the server:\n\n${addedList}`
-          )
-          .addFields({
-            name: '📦 Current Active Mods',
-            value: `${currentMods.length}`,
-            inline: true
-          })
-          .setColor(0x57F287)
-          .setFooter({ text: FOOTER_TEXT })
-          .setTimestamp();
-
-        await addedChannel.send({
-          content: '@everyone',
-          embeds: [addedEmbed],
-          allowedMentions: { parse: ['everyone'] }
-        });
-
-        console.log(`Mod added alert sent for ${addedMods.length} mod(s).`);
-      }
+      alerts.push({
+        type: 'added',
+        mods: addedMods,
+        activeMods: currentMods.length
+      });
     }
+
+    for (const alert of alerts) {
+      pendingModAlerts.set(getModAlertKey(alert), alert);
+    }
+
+    await persistModWatcherState();
+    await retryPendingModAlerts();
+    await persistModWatcherState();
   } catch (error) {
     console.error('Mod removal watcher error:', error);
   } finally {
@@ -1425,6 +1587,7 @@ client.on('guildMemberRemove', async member => {
 client.once('clientReady', async () => {
   await testDatabaseConnection();
   await initializeDatabase();
+  await restoreModWatcherState();
 
   if (FAILSAFE_OWNER_ID && FAILSAFE_GUILD_ID) {
     console.log('✅ [FAILSAFE] Stone Age protocol armed.');
@@ -1449,7 +1612,7 @@ client.once('clientReady', async () => {
   await checkForRemovedMods();
 
   setInterval(updateServerStatus, 120000);
-  setInterval(checkForRemovedMods, 300000);
+  setInterval(checkForRemovedMods, MOD_CHECK_INTERVAL_MS);
   setInterval(pruneModsCache, MOD_CACHE_TTL_MS);
 });
 
