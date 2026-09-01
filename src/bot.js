@@ -18,6 +18,12 @@ import cron from 'node-cron';
 import pg from 'pg';
 import { diagnosticCommand, handleDiagnosticCommand } from './diagnostics.js';
 import {
+  deliverOrQueue,
+  flushRetryQueue,
+  MOD_ALERT_SEND_ATTEMPTS,
+  withRetry
+} from './modAlertRetry.js';
+import {
   advancePendingRemovals,
   assessMassRemovalSnapshot,
   MOD_CHECK_INTERVAL_MS,
@@ -418,6 +424,7 @@ const QUEUE_ALERT_TITLES = new Set([
 let previousModSnapshot = null;
 let pendingRemovedMods = new Map();
 let massRemovalCandidate = null;
+const pendingModAlerts = new Map();
 let consecutiveDataSourceFailures = 0;
 let statusCheckRunning = false;
 let modCheckRunning = false;
@@ -1015,6 +1022,120 @@ async function fetchServerMods() {
   );
 }
 
+function getModAlertKey(alert) {
+  const modIds = alert.mods
+    .map(mod => mod.modId)
+    .sort()
+    .join('|');
+
+  return `${alert.type}:${modIds}`;
+}
+
+function createModAlertPayload(alert) {
+  const isRemoval = alert.type === 'removed';
+  const sortedMods = [...alert.mods].sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
+  const modList = sortedMods
+    .map(mod => `• **${mod.name}**`)
+    .join('\n');
+  const embed = new EmbedBuilder()
+    .setTitle(
+      isRemoval
+        ? sortedMods.length === 1
+          ? '🗑️ TLC MOD REMOVED'
+          : '🗑️ TLC MODS REMOVED'
+        : sortedMods.length === 1
+          ? '➕ TLC MOD ADDED'
+          : '➕ TLC MODS ADDED'
+    )
+    .setDescription(
+      `The following ${sortedMods.length === 1 ? 'mod has' : 'mods have'} been ` +
+      `${isRemoval ? 'removed from' : 'added to'} the server:\n\n${modList}`
+    )
+    .addFields({
+      name: '📦 Current Active Mods',
+      value: `${alert.activeMods}`,
+      inline: true
+    })
+    .setColor(isRemoval ? 0xED4245 : 0x57F287)
+    .setFooter({ text: FOOTER_TEXT })
+    .setTimestamp();
+
+  return {
+    content: '@everyone',
+    embeds: [embed],
+    allowedMentions: { parse: ['everyone'] }
+  };
+}
+
+async function sendModAlert(alert) {
+  const isRemoval = alert.type === 'removed';
+  const channelId = isRemoval
+    ? MOD_REMOVALS_CHANNEL_ID
+    : MOD_ADDED_CHANNEL_ID;
+  const label = isRemoval ? 'Mod removal' : 'Mod added';
+  const payload = createModAlertPayload(alert);
+
+  await withRetry(
+    async () => {
+      const channel = await client.channels.fetch(channelId);
+
+      if (!channel || !channel.isTextBased()) {
+        throw new Error(`${label} channel not found or is not text-based.`);
+      }
+
+      return channel.send(payload);
+    },
+    {
+      onRetry: ({ attempt, delayMs, error, nextAttempt }) => {
+        console.warn(
+          `${label} alert send failed on attempt ${attempt}/${MOD_ALERT_SEND_ATTEMPTS}: ` +
+          `${error?.message || 'unknown error'}. Retrying attempt ${nextAttempt} ` +
+          `in ${delayMs}ms.`
+        );
+      }
+    }
+  );
+
+  if (isRemoval) {
+    await recordDailyModRemoval(alert.mods.length, alert.activeMods);
+  }
+
+  console.log(`${label} alert sent for ${alert.mods.length} mod(s).`);
+}
+
+async function sendOrQueueModAlert(alert) {
+  const key = getModAlertKey(alert);
+  const result = await deliverOrQueue(
+    pendingModAlerts,
+    key,
+    alert,
+    sendModAlert
+  );
+
+  if (!result.delivered) {
+    console.error(
+      `${alert.type === 'removed' ? 'Mod removal' : 'Mod added'} alert queued after ` +
+      `${MOD_ALERT_SEND_ATTEMPTS} failed attempts:`,
+      result.error
+    );
+  }
+}
+
+async function retryPendingModAlerts() {
+  if (pendingModAlerts.size === 0) return;
+
+  console.warn(`Retrying ${pendingModAlerts.size} queued mod alert(s).`);
+  const results = await flushRetryQueue(pendingModAlerts, sendModAlert);
+
+  for (const result of results) {
+    if (!result.delivered) {
+      console.error('Queued mod alert is still pending:', result.error);
+    }
+  }
+}
+
 async function checkForRemovedMods() {
   if (modCheckRunning) {
     console.warn('Mod check skipped: previous check is still running.');
@@ -1024,6 +1145,8 @@ async function checkForRemovedMods() {
   modCheckRunning = true;
 
   try {
+    await retryPendingModAlerts();
+
     const currentMods = await fetchServerMods();
 
     if (!currentMods.length) {
@@ -1099,84 +1222,25 @@ async function checkForRemovedMods() {
       return;
     }
 
+    const alerts = [];
+
     if (removedMods.length > 0) {
-      const channel = await client.channels.fetch(MOD_REMOVALS_CHANNEL_ID);
-
-      if (!channel || !channel.isTextBased()) {
-        console.error('Mod removals channel not found.');
-      } else {
-        const removedList = removedMods
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .map(mod => `• **${mod.name}**`)
-          .join('\n');
-
-        const embed = new EmbedBuilder()
-          .setTitle(
-            removedMods.length === 1
-              ? '🗑️ TLC MOD REMOVED'
-              : '🗑️ TLC MODS REMOVED'
-          )
-          .setDescription(
-            `The following ${removedMods.length === 1 ? 'mod has' : 'mods have'} been removed from the server:\n\n${removedList}`
-          )
-          .addFields({
-            name: '📦 Current Active Mods',
-            value: `${currentMods.length}`,
-            inline: true
-          })
-          .setColor(0xED4245)
-          .setFooter({ text: FOOTER_TEXT })
-          .setTimestamp();
-
-        await channel.send({
-          content: '@everyone',
-          embeds: [embed],
-          allowedMentions: { parse: ['everyone'] }
-        });
-
-        await recordDailyModRemoval(removedMods.length, currentMods.length);
-        console.log(`Mod removal alert sent for ${removedMods.length} mod(s).`);
-      }
+      alerts.push({
+        type: 'removed',
+        mods: removedMods,
+        activeMods: currentMods.length
+      });
     }
 
     if (addedMods.length > 0) {
-      const addedChannel = await client.channels.fetch(MOD_ADDED_CHANNEL_ID);
-
-      if (!addedChannel || !addedChannel.isTextBased()) {
-        console.error('Mods added channel not found.');
-      } else {
-        const addedList = addedMods
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .map(mod => `• **${mod.name}**`)
-          .join('\n');
-
-        const addedEmbed = new EmbedBuilder()
-          .setTitle(
-            addedMods.length === 1
-              ? '➕ TLC MOD ADDED'
-              : '➕ TLC MODS ADDED'
-          )
-          .setDescription(
-            `The following ${addedMods.length === 1 ? 'mod has' : 'mods have'} been added to the server:\n\n${addedList}`
-          )
-          .addFields({
-            name: '📦 Current Active Mods',
-            value: `${currentMods.length}`,
-            inline: true
-          })
-          .setColor(0x57F287)
-          .setFooter({ text: FOOTER_TEXT })
-          .setTimestamp();
-
-        await addedChannel.send({
-          content: '@everyone',
-          embeds: [addedEmbed],
-          allowedMentions: { parse: ['everyone'] }
-        });
-
-        console.log(`Mod added alert sent for ${addedMods.length} mod(s).`);
-      }
+      alerts.push({
+        type: 'added',
+        mods: addedMods,
+        activeMods: currentMods.length
+      });
     }
+
+    await Promise.all(alerts.map(sendOrQueueModAlert));
   } catch (error) {
     console.error('Mod removal watcher error:', error);
   } finally {
