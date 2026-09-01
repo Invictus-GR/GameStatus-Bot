@@ -18,8 +18,11 @@ import cron from 'node-cron';
 import pg from 'pg';
 import { diagnosticCommand, handleDiagnosticCommand } from './diagnostics.js';
 import {
+  advancePendingRemovals,
   assessMassRemovalSnapshot,
-  MOD_MASS_REMOVAL_CONFIRMATIONS
+  MOD_CHECK_INTERVAL_MS,
+  MOD_MASS_REMOVAL_CONFIRMATIONS,
+  MOD_REMOVAL_CONFIRMATIONS
 } from './modSnapshotGuard.js';
 
 const { Pool } = pg;
@@ -404,7 +407,6 @@ const MOD_ADDED_CHANNEL_ID = '1544028029607612566';
 const ADMIN_REPORT_CHANNEL_ID = '1530535429491916810';
 const FOOTER_TEXT = 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC';
 const ARMAHQ_TIMEOUT_MS = 10000;
-const MOD_CHECK_INTERVAL_MS = 60 * 1000;
 const MODS_PER_PAGE = 20;
 const MOD_CACHE_TTL_MS = 10 * 60 * 1000;
 const QUEUE_ALERT_TITLES = new Set([
@@ -414,7 +416,7 @@ const QUEUE_ALERT_TITLES = new Set([
 ]);
 
 let previousModSnapshot = null;
-const pendingRemovedMods = new Map();
+let pendingRemovedMods = new Map();
 let massRemovalCandidate = null;
 let consecutiveDataSourceFailures = 0;
 let statusCheckRunning = false;
@@ -1067,25 +1069,20 @@ async function checkForRemovedMods() {
 
     await recordDailyModCheck(currentMods.length);
 
-    const removedMods = [];
     const addedMods = [];
-    const recoveredPendingRemovals = new Set();
-
-    for (const [modId, mod] of pendingRemovedMods) {
-      if (!currentSnapshot.has(modId)) {
-        removedMods.push(mod);
-        pendingRemovedMods.delete(modId);
-      } else {
-        recoveredPendingRemovals.add(modId);
-        pendingRemovedMods.delete(modId);
+    const removalConfirmation = advancePendingRemovals(
+      previousModSnapshot,
+      currentSnapshot,
+      pendingRemovedMods,
+      {
+        initialConfirmations: massRemovalAssessment.confirmed
+          ? MOD_MASS_REMOVAL_CONFIRMATIONS
+          : 1,
+        requiredConfirmations: MOD_REMOVAL_CONFIRMATIONS
       }
-    }
-
-    for (const [modId, mod] of previousModSnapshot) {
-      if (!currentSnapshot.has(modId) && !pendingRemovedMods.has(modId)) {
-        pendingRemovedMods.set(modId, mod);
-      }
-    }
+    );
+    pendingRemovedMods = removalConfirmation.pendingRemovals;
+    const { recoveredPendingRemovals, removedMods } = removalConfirmation;
 
     for (const [modId, mod] of currentSnapshot) {
       if (

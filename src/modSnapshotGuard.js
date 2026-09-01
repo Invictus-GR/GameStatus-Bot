@@ -1,6 +1,8 @@
 export const MOD_MASS_REMOVAL_MIN_COUNT = 10;
 export const MOD_MASS_REMOVAL_MIN_RATIO = 0.20;
 export const MOD_MASS_REMOVAL_CONFIRMATIONS = 2;
+export const MOD_CHECK_INTERVAL_MS = 30 * 1000;
+export const MOD_REMOVAL_CONFIRMATIONS = 4;
 
 function toIdSet(snapshot) {
   if (snapshot instanceof Map) {
@@ -57,5 +59,53 @@ export function assessMassRemovalSnapshot(
     confirmations,
     missingCount,
     missingRatio
+  };
+}
+
+export function advancePendingRemovals(
+  previousSnapshot,
+  currentSnapshot,
+  pendingRemovals,
+  {
+    initialConfirmations = 1,
+    requiredConfirmations = MOD_REMOVAL_CONFIRMATIONS
+  } = {}
+) {
+  const nextPendingRemovals = new Map(pendingRemovals);
+  const removedMods = [];
+  const recoveredPendingRemovals = new Set();
+
+  for (const [modId, pending] of nextPendingRemovals) {
+    if (!currentSnapshot.has(modId)) {
+      const confirmations = pending.confirmations + 1;
+
+      if (confirmations >= requiredConfirmations) {
+        removedMods.push(pending.mod);
+        nextPendingRemovals.delete(modId);
+      } else {
+        nextPendingRemovals.set(modId, {
+          mod: pending.mod,
+          confirmations
+        });
+      }
+    } else {
+      recoveredPendingRemovals.add(modId);
+      nextPendingRemovals.delete(modId);
+    }
+  }
+
+  for (const [modId, mod] of previousSnapshot) {
+    if (!currentSnapshot.has(modId) && !nextPendingRemovals.has(modId)) {
+      nextPendingRemovals.set(modId, {
+        mod,
+        confirmations: initialConfirmations
+      });
+    }
+  }
+
+  return {
+    pendingRemovals: nextPendingRemovals,
+    recoveredPendingRemovals,
+    removedMods
   };
 }
