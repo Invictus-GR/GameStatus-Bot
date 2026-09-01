@@ -404,6 +404,7 @@ const MOD_ADDED_CHANNEL_ID = '1544028029607612566';
 const ADMIN_REPORT_CHANNEL_ID = '1530535429491916810';
 const FOOTER_TEXT = 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC';
 const ARMAHQ_TIMEOUT_MS = 10000;
+const MOD_CHECK_INTERVAL_MS = 60 * 1000;
 const MODS_PER_PAGE = 20;
 const MOD_CACHE_TTL_MS = 10 * 60 * 1000;
 const QUEUE_ALERT_TITLES = new Set([
@@ -1480,7 +1481,7 @@ client.once('clientReady', async () => {
   await checkForRemovedMods();
 
   setInterval(updateServerStatus, 120000);
-  setInterval(checkForRemovedMods, 300000);
+  setInterval(checkForRemovedMods, MOD_CHECK_INTERVAL_MS);
   setInterval(pruneModsCache, MOD_CACHE_TTL_MS);
 });
 
