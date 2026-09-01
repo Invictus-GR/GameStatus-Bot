@@ -1,6 +1,15 @@
 export const MOD_ALERT_SEND_ATTEMPTS = 3;
 export const MOD_ALERT_RETRY_DELAYS_MS = Object.freeze([2000, 5000]);
 
+export function getModAlertKey(alert) {
+  const modIds = alert.mods
+    .map(mod => mod.modId)
+    .sort()
+    .join('|');
+
+  return `${alert.type}:${modIds}`;
+}
+
 function wait(delayMs) {
   return new Promise(resolve => setTimeout(resolve, delayMs));
 }

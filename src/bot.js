@@ -18,8 +18,8 @@ import cron from 'node-cron';
 import pg from 'pg';
 import { diagnosticCommand, handleDiagnosticCommand } from './diagnostics.js';
 import {
-  deliverOrQueue,
   flushRetryQueue,
+  getModAlertKey,
   MOD_ALERT_SEND_ATTEMPTS,
   withRetry
 } from './modAlertRetry.js';
@@ -30,6 +30,10 @@ import {
   MOD_MASS_REMOVAL_CONFIRMATIONS,
   MOD_REMOVAL_CONFIRMATIONS
 } from './modSnapshotGuard.js';
+import {
+  deserializeModWatcherState,
+  serializeModWatcherState
+} from './modWatcherState.js';
 
 const { Pool } = pg;
 const pool = new Pool({
@@ -88,9 +92,17 @@ async function initializeDatabase() {
       );
     `);
 
-    console.log('✅ Daily stats table ready.');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS mod_watcher_state (
+        id SMALLINT PRIMARY KEY CHECK (id = 1),
+        state JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    console.log('✅ Database tables ready.');
   } catch (error) {
-    console.error('❌ Failed to initialize daily stats table:', error);
+    console.error('❌ Failed to initialize database tables:', error);
   }
 }
 
@@ -425,6 +437,7 @@ let previousModSnapshot = null;
 let pendingRemovedMods = new Map();
 let massRemovalCandidate = null;
 const pendingModAlerts = new Map();
+let lastPersistedModWatcherState = null;
 let consecutiveDataSourceFailures = 0;
 let statusCheckRunning = false;
 let modCheckRunning = false;
@@ -436,6 +449,76 @@ class ArmaHQError extends Error {
     super(message);
     this.name = 'ArmaHQError';
     this.cause = cause;
+  }
+}
+
+function getCurrentModWatcherState() {
+  return serializeModWatcherState({
+    previousModSnapshot,
+    pendingRemovedMods,
+    massRemovalCandidate,
+    pendingModAlerts
+  });
+}
+
+async function persistModWatcherState({ force = false } = {}) {
+  const state = getCurrentModWatcherState();
+  const serializedState = JSON.stringify(state);
+
+  if (!force && serializedState === lastPersistedModWatcherState) {
+    return false;
+  }
+
+  try {
+    await pool.query(`
+      INSERT INTO mod_watcher_state (id, state, updated_at)
+      VALUES (1, $1::jsonb, NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        state = EXCLUDED.state,
+        updated_at = NOW();
+    `, [serializedState]);
+
+    lastPersistedModWatcherState = serializedState;
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to persist mod watcher state:', error);
+    return false;
+  }
+}
+
+async function restoreModWatcherState() {
+  try {
+    const result = await pool.query(`
+      SELECT state
+      FROM mod_watcher_state
+      WHERE id = 1
+    `);
+
+    if (result.rows.length === 0) {
+      console.log('No persisted mod watcher state found; a fresh snapshot will be created.');
+      return false;
+    }
+
+    const restored = deserializeModWatcherState(result.rows[0].state);
+    previousModSnapshot = restored.previousModSnapshot;
+    pendingRemovedMods = restored.pendingRemovedMods;
+    massRemovalCandidate = restored.massRemovalCandidate;
+    pendingModAlerts.clear();
+
+    for (const [key, alert] of restored.pendingModAlerts) {
+      pendingModAlerts.set(key, alert);
+    }
+
+    lastPersistedModWatcherState = JSON.stringify(getCurrentModWatcherState());
+    console.log(
+      `Restored mod watcher state: ${previousModSnapshot?.size ?? 0} active mods, ` +
+      `${pendingRemovedMods.size} pending removal(s), ` +
+      `${pendingModAlerts.size} queued alert(s).`
+    );
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to restore mod watcher state:', error);
+    return false;
   }
 }
 
@@ -1022,15 +1105,6 @@ async function fetchServerMods() {
   );
 }
 
-function getModAlertKey(alert) {
-  const modIds = alert.mods
-    .map(mod => mod.modId)
-    .sort()
-    .join('|');
-
-  return `${alert.type}:${modIds}`;
-}
-
 function createModAlertPayload(alert) {
   const isRemoval = alert.type === 'removed';
   const sortedMods = [...alert.mods].sort((a, b) =>
@@ -1105,26 +1179,8 @@ async function sendModAlert(alert) {
   console.log(`${label} alert sent for ${alert.mods.length} mod(s).`);
 }
 
-async function sendOrQueueModAlert(alert) {
-  const key = getModAlertKey(alert);
-  const result = await deliverOrQueue(
-    pendingModAlerts,
-    key,
-    alert,
-    sendModAlert
-  );
-
-  if (!result.delivered) {
-    console.error(
-      `${alert.type === 'removed' ? 'Mod removal' : 'Mod added'} alert queued after ` +
-      `${MOD_ALERT_SEND_ATTEMPTS} failed attempts:`,
-      result.error
-    );
-  }
-}
-
 async function retryPendingModAlerts() {
-  if (pendingModAlerts.size === 0) return;
+  if (pendingModAlerts.size === 0) return false;
 
   console.warn(`Retrying ${pendingModAlerts.size} queued mod alert(s).`);
   const results = await flushRetryQueue(pendingModAlerts, sendModAlert);
@@ -1134,6 +1190,8 @@ async function retryPendingModAlerts() {
       console.error('Queued mod alert is still pending:', result.error);
     }
   }
+
+  return true;
 }
 
 async function checkForRemovedMods() {
@@ -1145,7 +1203,9 @@ async function checkForRemovedMods() {
   modCheckRunning = true;
 
   try {
-    await retryPendingModAlerts();
+    if (await retryPendingModAlerts()) {
+      await persistModWatcherState();
+    }
 
     const currentMods = await fetchServerMods();
 
@@ -1161,6 +1221,7 @@ async function checkForRemovedMods() {
     if (!previousModSnapshot) {
       await recordDailyModCheck(currentMods.length);
       previousModSnapshot = currentSnapshot;
+      await persistModWatcherState();
       console.log(`Mod removal watcher initialized with ${currentMods.length} mods.`);
       return;
     }
@@ -1180,6 +1241,7 @@ async function checkForRemovedMods() {
         `(${percentage}%). Waiting for confirmation ` +
         `${massRemovalAssessment.confirmations}/${MOD_MASS_REMOVAL_CONFIRMATIONS}.`
       );
+      await persistModWatcherState();
       return;
     }
 
@@ -1219,6 +1281,7 @@ async function checkForRemovedMods() {
     previousModSnapshot = currentSnapshot;
 
     if (removedMods.length === 0 && addedMods.length === 0) {
+      await persistModWatcherState();
       return;
     }
 
@@ -1240,7 +1303,13 @@ async function checkForRemovedMods() {
       });
     }
 
-    await Promise.all(alerts.map(sendOrQueueModAlert));
+    for (const alert of alerts) {
+      pendingModAlerts.set(getModAlertKey(alert), alert);
+    }
+
+    await persistModWatcherState();
+    await retryPendingModAlerts();
+    await persistModWatcherState();
   } catch (error) {
     console.error('Mod removal watcher error:', error);
   } finally {
@@ -1518,6 +1587,7 @@ client.on('guildMemberRemove', async member => {
 client.once('clientReady', async () => {
   await testDatabaseConnection();
   await initializeDatabase();
+  await restoreModWatcherState();
 
   if (FAILSAFE_OWNER_ID && FAILSAFE_GUILD_ID) {
     console.log('✅ [FAILSAFE] Stone Age protocol armed.');
