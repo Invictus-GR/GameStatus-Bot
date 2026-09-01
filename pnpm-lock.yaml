@@ -14,6 +14,9 @@ importers:
       chalk:
         specifier: ^5.4.1
         version: 5.6.2
+      dejavu-fonts-ttf:
+        specifier: 2.37.3
+        version: 2.37.3
       discord.js:
         specifier: ^14.18.0
         version: 14.27.0
@@ -367,6 +370,9 @@ packages:
   defer-to-connect@2.0.1:
     resolution: {integrity: sha512-4tvttepXG1VaYGrRibk5EwJd1t4udunSOVMdLSAL6mId1ix438oPwPZMALY41FCijukO1L0twNcGsdzS7dHgDg==}
     engines: {node: '>=10'}
+
+  dejavu-fonts-ttf@2.37.3:
+    resolution: {integrity: sha512-f1hd7jJbeQa1VWcw+K2KrTXS50zTMaHpVC4XIKJpNcDeYR5ajMtj/iLlQDYNvLOKamUB3ARVVCf79lNwNVztSQ==}
 
   detect-libc@2.1.2:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
@@ -1088,6 +1094,8 @@ snapshots:
       mimic-response: 3.1.0
 
   defer-to-connect@2.0.1: {}
+
+  dejavu-fonts-ttf@2.37.3: {}
 
   detect-libc@2.1.2: {}
 

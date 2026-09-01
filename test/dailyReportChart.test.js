@@ -1,13 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { access } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import {
   buildDailyReportChartSvg,
+  configureDailyChartFonts,
   DAILY_CHART_HEIGHT,
   DAILY_CHART_WIDTH,
   DAILY_REPORT_SIGNATURE,
   renderDailyReportChartPng
 } from '../src/dailyReportChart.js';
+
+test('configures a bundled fontconfig environment for Sharp', async () => {
+  const environment = {
+    FONTCONFIG_PATH: '/missing/system/fonts',
+    FONTCONFIG_FILE: 'missing.conf'
+  };
+  const configured = configureDailyChartFonts(environment);
+
+  assert.equal(environment.FONTCONFIG_PATH, configured.fontconfigPath);
+  assert.equal(environment.FONTCONFIG_FILE, 'fonts.conf');
+  assert.match(configured.fontconfigPath, /assets\/fontconfig$/);
+  assert.match(
+    configured.fontFile,
+    /node_modules\/dejavu-fonts-ttf\/ttf\/DejaVuSans\.ttf$/
+  );
+  await access(join(configured.fontconfigPath, configured.fontconfigFile));
+  await access(configured.fontFile);
+});
 
 const start = Date.parse('2026-09-01T00:00:00Z');
 const end = Date.parse('2026-09-02T00:00:00Z');
@@ -94,4 +115,33 @@ test('passes the signed SVG through the PNG renderer', async () => {
 
   assert.equal(output, fakeBuffer);
   assert.match(receivedSvg, /MSgt_Invictus_GR for TLC/);
+});
+
+test('renders a legible PNG without relying on system fonts', async () => {
+  const previousPath = process.env.FONTCONFIG_PATH;
+  const previousFile = process.env.FONTCONFIG_FILE;
+
+  try {
+    process.env.FONTCONFIG_PATH = '/missing/system/fonts';
+    process.env.FONTCONFIG_FILE = 'missing.conf';
+
+    const output = await renderDailyReportChartPng({
+      reportDate: '2026-09-01',
+      windowStartMs: start,
+      windowEndMs: end,
+      samples: []
+    });
+
+    assert.equal(output.subarray(1, 4).toString(), 'PNG');
+    assert.ok(
+      output.length > 30_000,
+      `Expected rendered text glyphs; PNG was only ${output.length} bytes.`
+    );
+  } finally {
+    if (previousPath === undefined) delete process.env.FONTCONFIG_PATH;
+    else process.env.FONTCONFIG_PATH = previousPath;
+
+    if (previousFile === undefined) delete process.env.FONTCONFIG_FILE;
+    else process.env.FONTCONFIG_FILE = previousFile;
+  }
 });
