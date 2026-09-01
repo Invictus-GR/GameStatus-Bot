@@ -7,6 +7,11 @@ import {
   PermissionFlagsBits,
   SlashCommandBuilder
 } from 'discord.js';
+import {
+  createServerStatusAlertState,
+  observeServerStatus,
+  SERVER_OFFLINE_CONFIRMATIONS
+} from './serverStatusAlertState.js';
 
 const DIAGNOSTIC_OWNER_ID = '758072706099970129';
 const DIAGNOSTIC_CHANNEL_ID = '1544238980634247189';
@@ -311,6 +316,23 @@ async function testDatabase(pool) {
     results.push(fail('Database tables', error.message));
   }
 
+  try {
+    const columns = await pool.query(`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'server_health_state'
+        AND column_name = 'alert_state'
+    `);
+    results.push(
+      columns.rows.length === 1
+        ? pass('Server alert persistence', 'server_health_state.alert_state is ready.')
+        : fail('Server alert persistence', 'server_health_state.alert_state is missing.')
+    );
+  } catch (error) {
+    results.push(fail('Server alert persistence', error.message));
+  }
+
   return results;
 }
 
@@ -519,6 +541,27 @@ async function testStatus(context) {
     testEmbed.toJSON();
     testRow.toJSON();
     results.push(pass('Status render dry-run', 'Embed and button row serialize correctly.'));
+
+    let alertState = createServerStatusAlertState();
+    let alertResult;
+    const startedAt = Date.now();
+
+    for (let index = 0; index < SERVER_OFFLINE_CONFIRMATIONS; index += 1) {
+      alertResult = observeServerStatus(alertState, {
+        isOnline: false,
+        checkedAt: startedAt + (index * 30_000)
+      });
+      alertState = alertResult.state;
+    }
+
+    results.push(
+      alertResult?.transition === 'down' && alertState.pendingAlerts.length === 1
+        ? pass(
+            'Server outage alerts',
+            `${SERVER_OFFLINE_CONFIRMATIONS} confirmations • Status channel • no mention sent during test.`
+          )
+        : fail('Server outage alerts', 'Offline confirmation dry-run failed.')
+    );
   } catch (error) {
     results.push(fail('Status diagnostics', error.message));
   }
