@@ -1,11 +1,13 @@
 # Config
-
 /save/
 /config/
 
 # Dependency directories
 node_modules/
 
-# Package Lock
-package-lock.json
-pnpm-lock.yaml
+# Local environment / secrets
+.env
+.env.*
+!.env.example
+
+# Keep package manager lockfiles committed for reproducible deploys
