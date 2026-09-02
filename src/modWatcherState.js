@@ -1,6 +1,6 @@
 import { getModAlertKey } from './modAlertRetry.js';
 
-export const MOD_WATCHER_STATE_VERSION = 1;
+export const MOD_WATCHER_STATE_VERSION = 2;
 
 function normalizeMod(mod) {
   if (
@@ -37,6 +37,13 @@ function normalizeMassRemovalCandidate(candidate) {
   };
 }
 
+function normalizeDetectedAt(value) {
+  if (typeof value !== 'string') return null;
+
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+}
+
 function normalizeAlert(alert) {
   if (
     !alert ||
@@ -58,7 +65,8 @@ function normalizeAlert(alert) {
   return {
     type: alert.type,
     mods,
-    activeMods: alert.activeMods
+    activeMods: alert.activeMods,
+    detectedAt: normalizeDetectedAt(alert.detectedAt)
   };
 }
 

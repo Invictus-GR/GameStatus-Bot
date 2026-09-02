@@ -28,7 +28,8 @@ test('round-trips the complete mod watcher state', () => {
       ['removed:bravo', {
         type: 'removed',
         mods: [bravo],
-        activeMods: 1
+        activeMods: 1,
+        detectedAt: '2026-09-02T12:34:56.000Z'
       }]
     ])
   });
@@ -45,6 +46,10 @@ test('round-trips the complete mod watcher state', () => {
   });
   assert.equal(restored.pendingModAlerts.size, 1);
   assert.equal(restored.pendingModAlerts.get('removed:bravo').activeMods, 1);
+  assert.equal(
+    restored.pendingModAlerts.get('removed:bravo').detectedAt,
+    '2026-09-02T12:34:56.000Z'
+  );
 });
 
 test('serializes maps deterministically regardless of insertion order', () => {

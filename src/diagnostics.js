@@ -14,6 +14,7 @@ import {
   SERVER_OFFLINE_CONFIRMATIONS
 } from './serverStatusAlertState.js';
 import { DAILY_REPORT_SIGNATURE } from './dailyReportChart.js';
+import { buildDailyModChangeFields } from './dailyModChanges.js';
 import {
   formatCapacityField,
   SERVER_QUEUE_CAPACITY
@@ -241,10 +242,14 @@ function buildChangelogPreview() {
     .setTimestamp();
 }
 
-function buildDailyPreview(stats = {}, { withChart = false } = {}) {
+function buildDailyPreview(
+  stats = {},
+  { withChart = false, modChanges = { added: [], removed: [] } } = {}
+) {
   const averagePlayers = Number(stats.player_samples) > 0
     ? Math.round(Number(stats.player_sum) / Number(stats.player_samples))
     : 0;
+  const modChangeFields = buildDailyModChangeFields(modChanges);
   const preview = new EmbedBuilder()
     .setTitle('📊 TLC DAILY OPERATIONS REPORT')
     .setDescription('**TEST PREVIEW** • Nothing was posted to the admin channel.')
@@ -269,6 +274,7 @@ function buildDailyPreview(stats = {}, { withChart = false } = {}) {
         name: '📦 MODS',
         value:
           `Active Mods: **${stats.active_mods ?? 0}**\n` +
+          `Added: **${stats.mods_added_count ?? 0}**\n` +
           `Removed: **${stats.mods_removed_count ?? 0}**`,
         inline: true
       }
@@ -276,6 +282,10 @@ function buildDailyPreview(stats = {}, { withChart = false } = {}) {
     .setColor(0x5865F2)
     .setFooter({ text: DAILY_REPORT_SIGNATURE })
     .setTimestamp();
+
+  if (modChangeFields.length > 0) {
+    preview.addFields(...modChangeFields);
+  }
 
   if (withChart) {
     preview.setImage('attachment://tlc-daily-report-preview.png');
@@ -315,6 +325,7 @@ async function testDatabase(pool) {
       WHERE table_schema = 'public'
         AND table_name IN (
           'daily_stats',
+          'daily_mod_changes',
           'mod_watcher_state',
           'server_health_state',
           'server_metric_samples'
@@ -324,6 +335,7 @@ async function testDatabase(pool) {
     const names = tables.rows.map(row => row.table_name);
     const requiredTables = [
       'daily_stats',
+      'daily_mod_changes',
       'mod_watcher_state',
       'server_health_state',
       'server_metric_samples'
@@ -353,6 +365,23 @@ async function testDatabase(pool) {
     );
   } catch (error) {
     results.push(fail('Server alert persistence', error.message));
+  }
+
+  try {
+    const columns = await pool.query(`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'daily_stats'
+        AND column_name = 'mods_added_count'
+    `);
+    results.push(
+      columns.rows.length === 1
+        ? pass('Daily mod-change stats', 'Added and removed mod details are ready.')
+        : fail('Daily mod-change stats', 'daily_stats.mods_added_count is missing.')
+    );
+  } catch (error) {
+    results.push(fail('Daily mod-change stats', error.message));
   }
 
   return results;
@@ -652,7 +681,9 @@ async function testDaily(context) {
 
     if (reportData.stats) {
       results.push(pass('Yesterday daily stats', 'Daily-report source row exists.'));
-      buildDailyPreview(reportData.stats).toJSON();
+      buildDailyPreview(reportData.stats, {
+        modChanges: reportData.modChanges
+      }).toJSON();
     } else {
       results.push(warn('Yesterday daily stats', 'No row exists yet; this is valid when no stats were recorded yesterday.'));
       buildDailyPreview().toJSON();
@@ -947,7 +978,8 @@ await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       '📊 DAILY REPORT TEST',
       results,
       [buildDailyPreview(reportData?.stats ?? {}, {
-        withChart: Boolean(chartBuffer)
+        withChart: Boolean(chartBuffer),
+        modChanges: reportData?.modChanges
       })],
       files
     );

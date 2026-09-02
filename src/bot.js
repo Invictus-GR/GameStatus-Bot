@@ -51,6 +51,10 @@ import {
   renderDailyReportChartPng
 } from './dailyReportChart.js';
 import {
+  buildDailyModChangeFields,
+  groupDailyModChanges
+} from './dailyModChanges.js';
+import {
   formatCapacityField,
   SERVER_QUEUE_CAPACITY
 } from './statusDisplay.js';
@@ -88,6 +92,7 @@ async function initializeDatabase() {
         queue_25_reached BOOLEAN NOT NULL DEFAULT FALSE,
 
         active_mods INTEGER NOT NULL DEFAULT 0,
+        mods_added_count INTEGER NOT NULL DEFAULT 0,
         mods_removed_count INTEGER NOT NULL DEFAULT 0,
 
         warnings_count INTEGER NOT NULL DEFAULT 0,
@@ -100,6 +105,11 @@ async function initializeDatabase() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+    `);
+
+    await pool.query(`
+      ALTER TABLE daily_stats
+      ADD COLUMN IF NOT EXISTS mods_added_count INTEGER NOT NULL DEFAULT 0;
     `);
 
     await pool.query(`
@@ -124,6 +134,22 @@ async function initializeDatabase() {
         state JSONB NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS daily_mod_changes (
+        report_date DATE NOT NULL,
+        change_type TEXT NOT NULL CHECK (change_type IN ('added', 'removed')),
+        mod_id TEXT NOT NULL,
+        mod_name TEXT NOT NULL,
+        detected_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (report_date, change_type, mod_id)
+      );
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS daily_mod_changes_report_date_idx
+      ON daily_mod_changes (report_date);
     `);
 
     await pool.query(`
@@ -239,7 +265,7 @@ async function getYesterdayDailyReportData() {
     FROM london_day;
   `);
   const bounds = boundsResult.rows[0];
-  const [statsResult, samplesResult] = await Promise.all([
+  const [statsResult, samplesResult, modChangesResult] = await Promise.all([
     pool.query(`
       SELECT *
       FROM daily_stats
@@ -255,7 +281,17 @@ async function getYesterdayDailyReportData() {
       WHERE sampled_at >= $1::timestamptz
         AND sampled_at < $2::timestamptz
       ORDER BY sampled_at ASC
-    `, [bounds.window_start, bounds.window_end])
+    `, [bounds.window_start, bounds.window_end]),
+    pool.query(`
+      SELECT
+        change_type,
+        mod_id,
+        mod_name,
+        detected_at
+      FROM daily_mod_changes
+      WHERE report_date = $1::date
+      ORDER BY change_type ASC, LOWER(mod_name) ASC, mod_id ASC
+    `, [bounds.report_date])
   ]);
 
   return {
@@ -263,6 +299,7 @@ async function getYesterdayDailyReportData() {
     reportDate: bounds.report_date,
     windowStartMs: new Date(bounds.window_start).getTime(),
     windowEndMs: new Date(bounds.window_end).getTime(),
+    modChanges: groupDailyModChanges(modChangesResult.rows),
     samples: samplesResult.rows.map(sample => ({
       sampledAtMs: Number(sample.sampled_at_ms),
       players: Number(sample.players),
@@ -272,28 +309,105 @@ async function getYesterdayDailyReportData() {
   };
 }
 
-async function recordDailyModRemoval(removedCount, activeMods) {
+async function recordDailyModChanges(alert) {
+  if (
+    !alert ||
+    !['added', 'removed'].includes(alert.type) ||
+    !Array.isArray(alert.mods) ||
+    !Number.isInteger(alert.activeMods) ||
+    alert.activeMods < 0
+  ) {
+    throw new TypeError('Invalid daily mod change alert.');
+  }
+
+  const uniqueMods = [
+    ...new Map(
+      alert.mods
+        .filter(mod =>
+          typeof mod?.modId === 'string' &&
+          mod.modId.length > 0 &&
+          typeof mod.name === 'string' &&
+          mod.name.trim().length > 0
+        )
+        .map(mod => [mod.modId, { ...mod, name: mod.name.trim() }])
+    ).values()
+  ];
+
+  if (uniqueMods.length === 0) return 0;
+
+  const parsedDetectedAt = Date.parse(alert.detectedAt);
+  const detectedAt = Number.isFinite(parsedDetectedAt)
+    ? new Date(parsedDetectedAt).toISOString()
+    : new Date().toISOString();
+  let db;
+
   try {
-    await pool.query(`
+    db = await pool.connect();
+    await db.query('BEGIN');
+
+    const insertedResult = await db.query(`
+      INSERT INTO daily_mod_changes (
+        report_date,
+        change_type,
+        mod_id,
+        mod_name,
+        detected_at
+      )
+      SELECT
+        ($1::timestamptz AT TIME ZONE 'Europe/London')::date,
+        $2::text,
+        incoming.mod_id,
+        incoming.mod_name,
+        $1::timestamptz
+      FROM UNNEST($3::text[], $4::text[]) AS incoming(mod_id, mod_name)
+      ON CONFLICT (report_date, change_type, mod_id) DO NOTHING
+      RETURNING mod_id;
+    `, [
+      detectedAt,
+      alert.type,
+      uniqueMods.map(mod => mod.modId),
+      uniqueMods.map(mod => mod.name)
+    ]);
+
+    const insertedCount = insertedResult.rowCount ?? 0;
+
+    if (insertedCount > 0) {
+      const addedCount = alert.type === 'added' ? insertedCount : 0;
+      const removedCount = alert.type === 'removed' ? insertedCount : 0;
+
+      await db.query(`
       INSERT INTO daily_stats (
         report_date,
         active_mods,
+        mods_added_count,
         mods_removed_count,
         updated_at
       )
       VALUES (
-        (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London')::date,
-        $1,
+        ($1::timestamptz AT TIME ZONE 'Europe/London')::date,
         $2,
+        $3,
+        $4,
         NOW()
       )
       ON CONFLICT (report_date) DO UPDATE SET
         active_mods = EXCLUDED.active_mods,
+        mods_added_count = daily_stats.mods_added_count + EXCLUDED.mods_added_count,
         mods_removed_count = daily_stats.mods_removed_count + EXCLUDED.mods_removed_count,
         updated_at = NOW();
-    `, [activeMods, removedCount]);
+      `, [detectedAt, alert.activeMods, addedCount, removedCount]);
+    }
+
+    await db.query('COMMIT');
+    return insertedCount;
   } catch (error) {
-    console.error('❌ Failed to record daily mod removal:', error);
+    if (db) {
+      await db.query('ROLLBACK').catch(() => {});
+    }
+    console.error('❌ Failed to record daily mod changes:', error);
+    throw error;
+  } finally {
+    if (db) db.release();
   }
 }
 
@@ -463,6 +577,7 @@ async function sendDailyReport() {
     const uptimeRate = totalTrackedSeconds > 0
       ? ((uptimeSeconds / totalTrackedSeconds) * 100).toFixed(1)
       : '0.0';
+    const modChangeFields = buildDailyModChangeFields(reportData.modChanges);
 
     const channel = await client.channels.fetch(ADMIN_REPORT_CHANNEL_ID);
 
@@ -503,6 +618,7 @@ async function sendDailyReport() {
           name: '📦 MODS',
           value:
             `Active Mods: **${stats.active_mods}**\n` +
+            `Added: **${stats.mods_added_count ?? 0}**\n` +
             `Removed: **${stats.mods_removed_count}**`,
           inline: true
         },
@@ -517,6 +633,10 @@ async function sendDailyReport() {
       .setColor(0x5865F2)
       .setFooter({ text: DAILY_REPORT_SIGNATURE })
       .setTimestamp();
+
+    if (modChangeFields.length > 0) {
+      embed.addFields(...modChangeFields);
+    }
 
     const files = [];
 
@@ -1496,6 +1616,8 @@ async function sendModAlert(alert) {
   const label = isRemoval ? 'Mod removal' : 'Mod added';
   const payload = createModAlertPayload(alert);
 
+  await recordDailyModChanges(alert);
+
   await withRetry(
     async () => {
       const channel = await client.channels.fetch(channelId);
@@ -1516,10 +1638,6 @@ async function sendModAlert(alert) {
       }
     }
   );
-
-  if (isRemoval) {
-    await recordDailyModRemoval(alert.mods.length, alert.activeMods);
-  }
 
   console.log(`${label} alert sent for ${alert.mods.length} mod(s).`);
 }
@@ -1567,7 +1685,7 @@ async function checkForRemovedMods() {
       await recordDailyModCheck(currentMods.length);
       previousModSnapshot = currentSnapshot;
       await persistModWatcherState();
-      console.log(`Mod removal watcher initialized with ${currentMods.length} mods.`);
+      console.log(`Mod change watcher initialized with ${currentMods.length} mods.`);
       return;
     }
 
@@ -1631,12 +1749,14 @@ async function checkForRemovedMods() {
     }
 
     const alerts = [];
+    const detectedAt = new Date().toISOString();
 
     if (removedMods.length > 0) {
       alerts.push({
         type: 'removed',
         mods: removedMods,
-        activeMods: currentMods.length
+        activeMods: currentMods.length,
+        detectedAt
       });
     }
 
@@ -1644,7 +1764,8 @@ async function checkForRemovedMods() {
       alerts.push({
         type: 'added',
         mods: addedMods,
-        activeMods: currentMods.length
+        activeMods: currentMods.length,
+        detectedAt
       });
     }
 
@@ -1656,7 +1777,7 @@ async function checkForRemovedMods() {
     await retryPendingModAlerts();
     await persistModWatcherState();
   } catch (error) {
-    console.error('Mod removal watcher error:', error);
+    console.error('Mod change watcher error:', error);
   } finally {
     modCheckRunning = false;
   }
