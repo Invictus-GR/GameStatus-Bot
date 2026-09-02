@@ -60,6 +60,16 @@ import {
   groupDailyModChanges
 } from './dailyModChanges.js';
 import {
+  handleModChangesCommand,
+  modChangesCommand
+} from './modChangesCommand.js';
+import {
+  buildRollingModAlertDescription,
+  countRollingModChanges,
+  createRollingModEventRows,
+  groupRollingModEvents
+} from './rollingModAlerts.js';
+import {
   formatCapacityField,
   SERVER_QUEUE_CAPACITY
 } from './statusDisplay.js';
@@ -155,6 +165,22 @@ async function initializeDatabase() {
     await pool.query(`
       CREATE INDEX IF NOT EXISTS daily_mod_changes_report_date_idx
       ON daily_mod_changes (report_date);
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS mod_alert_events (
+        event_key TEXT PRIMARY KEY,
+        report_date DATE NOT NULL,
+        change_type TEXT NOT NULL CHECK (change_type IN ('added', 'removed')),
+        mod_id TEXT NOT NULL,
+        mod_name TEXT NOT NULL,
+        detected_at TIMESTAMPTZ NOT NULL
+      );
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS mod_alert_events_report_date_type_idx
+      ON mod_alert_events (report_date, change_type, detected_at);
     `);
 
     await pool.query(`
@@ -410,6 +436,143 @@ async function recordDailyModChanges(alert) {
       await db.query('ROLLBACK').catch(() => {});
     }
     console.error('❌ Failed to record daily mod changes:', error);
+    throw error;
+  } finally {
+    if (db) db.release();
+  }
+}
+
+async function loadRollingModEvents(db, reportDate, type) {
+  const historyResult = await db.query(`
+    SELECT change_type, mod_id, mod_name, detected_at
+    FROM (
+      SELECT
+        event.change_type,
+        event.mod_id,
+        event.mod_name,
+        event.detected_at
+      FROM mod_alert_events event
+      WHERE event.report_date = $1::date
+        AND event.change_type = $2::text
+
+      UNION ALL
+
+      SELECT
+        daily.change_type,
+        daily.mod_id,
+        daily.mod_name,
+        daily.detected_at
+      FROM daily_mod_changes daily
+      WHERE daily.report_date = $1::date
+        AND daily.change_type = $2::text
+        AND NOT EXISTS (
+          SELECT 1
+          FROM mod_alert_events event
+          WHERE event.report_date = daily.report_date
+            AND event.change_type = daily.change_type
+            AND event.mod_id = daily.mod_id
+            AND event.detected_at = daily.detected_at
+        )
+    ) history
+    ORDER BY detected_at ASC, LOWER(mod_name) ASC, mod_id ASC;
+  `, [reportDate, type]);
+
+  return groupRollingModEvents(historyResult.rows);
+}
+
+async function getCurrentRollingModHistory() {
+  const currentResult = await pool.query(`
+    WITH london_day AS (
+      SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London')::date AS report_date
+    )
+    SELECT
+      TO_CHAR(day.report_date, 'YYYY-MM-DD') AS report_date,
+      stats.active_mods
+    FROM london_day day
+    LEFT JOIN daily_stats stats
+      ON stats.report_date = day.report_date;
+  `);
+  const current = currentResult.rows[0];
+  const [added, removed] = await Promise.all([
+    loadRollingModEvents(pool, current.report_date, 'added'),
+    loadRollingModEvents(pool, current.report_date, 'removed')
+  ]);
+
+  return {
+    reportDate: current.report_date,
+    activeMods: current.active_mods == null
+      ? null
+      : Number(current.active_mods),
+    added,
+    removed
+  };
+}
+
+async function recordRollingModAlertEvent(alert) {
+  const eventRows = createRollingModEventRows(alert);
+  if (eventRows.length === 0) {
+    throw new TypeError('Rolling mod alert does not contain any valid mods.');
+  }
+
+  const detectedAt = eventRows[0].detectedAt;
+  let db;
+
+  try {
+    db = await pool.connect();
+    await db.query('BEGIN');
+
+    await db.query(`
+      INSERT INTO mod_alert_events (
+        event_key,
+        report_date,
+        change_type,
+        mod_id,
+        mod_name,
+        detected_at
+      )
+      SELECT
+        incoming.event_key,
+        ($1::timestamptz AT TIME ZONE 'Europe/London')::date,
+        incoming.change_type,
+        incoming.mod_id,
+        incoming.mod_name,
+        $1::timestamptz
+      FROM UNNEST(
+        $2::text[],
+        $3::text[],
+        $4::text[],
+        $5::text[]
+      ) AS incoming(event_key, change_type, mod_id, mod_name)
+      ON CONFLICT (event_key) DO NOTHING;
+    `, [
+      detectedAt,
+      eventRows.map(row => row.eventKey),
+      eventRows.map(row => row.type),
+      eventRows.map(row => row.modId),
+      eventRows.map(row => row.name)
+    ]);
+
+    const reportDateResult = await db.query(`
+      SELECT TO_CHAR(
+        ($1::timestamptz AT TIME ZONE 'Europe/London')::date,
+        'YYYY-MM-DD'
+      ) AS report_date;
+    `, [detectedAt]);
+    const reportDate = reportDateResult.rows[0].report_date;
+
+    const events = await loadRollingModEvents(db, reportDate, alert.type);
+
+    await db.query('COMMIT');
+
+    return {
+      reportDate,
+      events
+    };
+  } catch (error) {
+    if (db) {
+      await db.query('ROLLBACK').catch(() => {});
+    }
+    console.error('❌ Failed to record rolling mod alert event:', error);
     throw error;
   } finally {
     if (db) db.release();
@@ -809,6 +972,22 @@ const ARMAHQ_TIMEOUT_MS = 10000;
 const SERVER_STATUS_ALERT_SEND_ATTEMPTS = 3;
 const MODS_PER_PAGE = 20;
 const MOD_CACHE_TTL_MS = 10 * 60 * 1000;
+const ROLLING_MOD_ALERT_TITLES = Object.freeze({
+  added: '➕ TLC MOD ADDITIONS — LIVE',
+  removed: '🗑️ TLC MOD REMOVALS — LIVE'
+});
+const KNOWN_MOD_ALERT_TITLES = Object.freeze({
+  added: new Set([
+    '➕ TLC MOD ADDED',
+    '➕ TLC MODS ADDED',
+    ROLLING_MOD_ALERT_TITLES.added
+  ]),
+  removed: new Set([
+    '🗑️ TLC MOD REMOVED',
+    '🗑️ TLC MODS REMOVED',
+    ROLLING_MOD_ALERT_TITLES.removed
+  ])
+});
 const QUEUE_ALERT_TITLES = new Set([
   '⚠️ TLC IS FILLING UP',
   '🔥 TLC IS PACKED',
@@ -1699,36 +1878,33 @@ async function fetchServerMods() {
   );
 }
 
-function createModAlertPayload(alert) {
+function createModAlertPayload(alert, history) {
   const isRemoval = alert.type === 'removed';
-  const sortedMods = [...alert.mods].sort((a, b) =>
-    a.name.localeCompare(b.name)
-  );
-  const modList = sortedMods
-    .map(mod => `• **${mod.name}**`)
-    .join('\n');
+  const changeCount = countRollingModChanges(history.events);
+  const latestEvent = history.events.at(-1);
   const embed = new EmbedBuilder()
-    .setTitle(
-      isRemoval
-        ? sortedMods.length === 1
-          ? '🗑️ TLC MOD REMOVED'
-          : '🗑️ TLC MODS REMOVED'
-        : sortedMods.length === 1
-          ? '➕ TLC MOD ADDED'
-          : '➕ TLC MODS ADDED'
+    .setTitle(ROLLING_MOD_ALERT_TITLES[alert.type])
+    .setDescription(buildRollingModAlertDescription(history.events))
+    .addFields(
+      {
+        name: '📦 Current Active Mods',
+        value: `${alert.activeMods}`,
+        inline: true
+      },
+      {
+        name: isRemoval ? '🗑️ Removals Shown' : '➕ Additions Shown',
+        value: `${changeCount}`,
+        inline: true
+      },
+      {
+        name: '🗓️ UK Reporting Day',
+        value: history.reportDate,
+        inline: false
+      }
     )
-    .setDescription(
-      `The following ${sortedMods.length === 1 ? 'mod has' : 'mods have'} been ` +
-      `${isRemoval ? 'removed from' : 'added to'} the server:\n\n${modList}`
-    )
-    .addFields({
-      name: '📦 Current Active Mods',
-      value: `${alert.activeMods}`,
-      inline: true
-    })
     .setColor(isRemoval ? 0xED4245 : 0x57F287)
     .setFooter({ text: FOOTER_TEXT })
-    .setTimestamp();
+    .setTimestamp(new Date(latestEvent.detectedAt));
 
   return {
     content: '@everyone',
@@ -1737,15 +1913,60 @@ function createModAlertPayload(alert) {
   };
 }
 
+async function deletePreviousModAlertMessages(channel, type, currentMessageId) {
+  let recentMessages;
+
+  try {
+    recentMessages = await channel.messages.fetch({ limit: 100 });
+  } catch (error) {
+    console.warn(
+      `Could not load previous ${type} mod alerts for cleanup:`,
+      error?.message || error
+    );
+    return;
+  }
+
+  const previousAlerts = recentMessages.filter(message =>
+    message.id !== currentMessageId &&
+    message.author.id === client.user.id &&
+    message.embeds.some(embed =>
+      KNOWN_MOD_ALERT_TITLES[type].has(embed.title)
+    )
+  );
+
+  for (const message of previousAlerts.values()) {
+    try {
+      await withRetry(
+        () => message.delete(),
+        {
+          retryDelaysMs: [500, 1500],
+          onRetry: ({ attempt, error }) => {
+            console.warn(
+              `Previous ${type} mod alert deletion failed on attempt ${attempt}: ` +
+              `${error?.message || 'unknown error'}.`
+            );
+          }
+        }
+      );
+    } catch (error) {
+      console.error(
+        `Could not delete previous ${type} mod alert ${message.id}:`,
+        error
+      );
+    }
+  }
+}
+
 async function sendModAlert(alert) {
   const isRemoval = alert.type === 'removed';
   const channelId = isRemoval
     ? MOD_REMOVALS_CHANNEL_ID
     : MOD_ADDED_CHANNEL_ID;
   const label = isRemoval ? 'Mod removal' : 'Mod added';
-  const payload = createModAlertPayload(alert);
 
   await recordDailyModChanges(alert);
+  const history = await recordRollingModAlertEvent(alert);
+  const payload = createModAlertPayload(alert, history);
 
   await withRetry(
     async () => {
@@ -1755,7 +1976,9 @@ async function sendModAlert(alert) {
         throw new Error(`${label} channel not found or is not text-based.`);
       }
 
-      return channel.send(payload);
+      const message = await channel.send(payload);
+      await deletePreviousModAlertMessages(channel, alert.type, message.id);
+      return message;
     },
     {
       onRetry: ({ attempt, delayMs, error, nextAttempt }) => {
@@ -2024,6 +2247,18 @@ client.on('interactionCreate', async interaction => {
   try {
     if (
       interaction.isChatInputCommand() &&
+      interaction.commandName === 'modchanges'
+    ) {
+      await handleModChangesCommand(interaction, {
+        getCurrentRollingModHistory,
+        fetchServerMods,
+        footerText: FOOTER_TEXT
+      });
+      return;
+    }
+
+    if (
+      interaction.isChatInputCommand() &&
       interaction.commandName === 'backfillmods'
     ) {
       await handleBackfillModsCommand(interaction, {
@@ -2221,9 +2456,12 @@ client.once('clientReady', async () => {
     changelogCommand,
     warnCommand,
     diagnosticCommand,
-    backfillModsCommand
+    backfillModsCommand,
+    modChangesCommand
   ]);
-  console.log('/changelog, /warn, /test and /backfillmods commands registered');
+  console.log(
+    '/changelog, /warn, /test, /backfillmods and /modchanges commands registered'
+  );
   console.log(`Discord bot connected as ${client.user.tag}`);
 
   await updateServerStatus();

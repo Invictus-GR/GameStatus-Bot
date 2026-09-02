@@ -450,6 +450,7 @@ async function testDatabase(pool) {
         AND table_name IN (
           'daily_stats',
           'daily_mod_changes',
+          'mod_alert_events',
           'mod_watcher_state',
           'server_health_state',
           'server_metric_samples'
@@ -460,6 +461,7 @@ async function testDatabase(pool) {
     const requiredTables = [
       'daily_stats',
       'daily_mod_changes',
+      'mod_alert_events',
       'mod_watcher_state',
       'server_health_state',
       'server_metric_samples'
