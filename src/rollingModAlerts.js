@@ -115,7 +115,7 @@ function formatEventBlock(event, isLatest) {
     .map(mod => `• **${mod.name}**`)
     .join('\n');
 
-  return `**<t:${unixSeconds}:t>**${label}\n${modList}`;
+  return `**<t:${unixSeconds}:f>**${label}\n${modList}`;
 }
 
 export function buildRollingModAlertDescription(
