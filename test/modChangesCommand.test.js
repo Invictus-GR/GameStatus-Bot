@@ -40,7 +40,7 @@ test('builds two public snapshot embeds with no everyone mention', () => {
   assert.doesNotMatch(JSON.stringify(embeds), /@everyone/);
 });
 
-test('shows a clear empty state when the reporting period has no changes', () => {
+test('shows a clear empty state when today has no changes', () => {
   const embeds = createModChangesCommandEmbeds({
     reportDate: '2026-09-02',
     activeMods: 135,
@@ -49,8 +49,9 @@ test('shows a clear empty state when the reporting period has no changes', () =>
     footerText: 'TLC Command'
   }).map(embed => embed.toJSON());
 
-  assert.match(embeds[0].description, /No confirmed mod additions/);
-  assert.match(embeds[1].description, /No confirmed mod removals/);
+  assert.equal(embeds[0].description, '*No mod additions recorded today.*');
+  assert.equal(embeds[1].description, '*No mod removals recorded today.*');
+  assert.doesNotMatch(JSON.stringify(embeds), /UK reporting/i);
 });
 
 test('rejects every user except Invictus without posting publicly', async () => {

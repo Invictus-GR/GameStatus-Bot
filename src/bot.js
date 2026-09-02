@@ -1895,11 +1895,6 @@ function createModAlertPayload(alert, history) {
         name: isRemoval ? '🗑️ Removals Shown' : '➕ Additions Shown',
         value: `${changeCount}`,
         inline: true
-      },
-      {
-        name: '🗓️ UK Reporting Day',
-        value: history.reportDate,
-        inline: false
       }
     )
     .setColor(isRemoval ? 0xED4245 : 0x57F287)

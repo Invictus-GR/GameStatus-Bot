@@ -26,11 +26,11 @@ function buildHistoryDescription(events, type) {
   }
 
   return type === 'added'
-    ? '*No confirmed mod additions in the current UK reporting period.*'
-    : '*No confirmed mod removals in the current UK reporting period.*';
+    ? '*No mod additions recorded today.*'
+    : '*No mod removals recorded today.*';
 }
 
-function buildHistoryEmbed({ type, events, activeMods, reportDate, footerText }) {
+function buildHistoryEmbed({ type, events, activeMods, footerText }) {
   const isRemoval = type === 'removed';
   const total = countRollingModChanges(events);
 
@@ -54,35 +54,26 @@ function buildHistoryEmbed({ type, events, activeMods, reportDate, footerText })
       }
     )
     .setColor(isRemoval ? 0xED4245 : 0x57F287)
-    .setFooter({
-      text: `${reportDate} UK reporting day • ${footerText}`
-    });
+    .setFooter({ text: footerText });
 }
 
 export function createModChangesCommandEmbeds({
   added = [],
   removed = [],
   activeMods = null,
-  reportDate,
   footerText
 }) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) {
-    throw new TypeError('A valid report date is required for /modchanges.');
-  }
-
   return [
     buildHistoryEmbed({
       type: 'added',
       events: added,
       activeMods,
-      reportDate,
       footerText
     }),
     buildHistoryEmbed({
       type: 'removed',
       events: removed,
       activeMods,
-      reportDate,
       footerText
     })
   ];
