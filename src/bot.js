@@ -17,7 +17,12 @@ import {
 import fetch from 'node-fetch';
 import cron from 'node-cron';
 import pg from 'pg';
-import { diagnosticCommand, handleDiagnosticCommand } from './diagnostics.js';
+import {
+  backfillModsCommand,
+  diagnosticCommand,
+  handleBackfillModsCommand,
+  handleDiagnosticCommand
+} from './diagnostics.js';
 import {
   flushRetryQueue,
   getModAlertKey,
@@ -405,6 +410,130 @@ async function recordDailyModChanges(alert) {
       await db.query('ROLLBACK').catch(() => {});
     }
     console.error('❌ Failed to record daily mod changes:', error);
+    throw error;
+  } finally {
+    if (db) db.release();
+  }
+}
+
+async function backfillDailyModChanges(reportDate, changes) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) {
+    throw new TypeError('Backfill report date must use YYYY-MM-DD.');
+  }
+
+  const uniqueChanges = [
+    ...new Map(
+      (Array.isArray(changes) ? changes : [])
+        .filter(change =>
+          ['added', 'removed'].includes(change?.type) &&
+          typeof change.modId === 'string' &&
+          change.modId.length > 0 &&
+          typeof change.name === 'string' &&
+          change.name.trim().length > 0 &&
+          Number.isFinite(Date.parse(change.detectedAt))
+        )
+        .map(change => [
+          `${change.type}:${change.modId}`,
+          {
+            type: change.type,
+            modId: change.modId,
+            name: change.name.trim(),
+            detectedAt: new Date(change.detectedAt).toISOString()
+          }
+        ])
+    ).values()
+  ];
+
+  if (uniqueChanges.length === 0) {
+    return {
+      insertedCount: 0,
+      modChanges: { added: [], removed: [] },
+      totals: { added: 0, removed: 0 }
+    };
+  }
+
+  let db;
+
+  try {
+    db = await pool.connect();
+    await db.query('BEGIN');
+
+    const insertedResult = await db.query(`
+      INSERT INTO daily_mod_changes (
+        report_date,
+        change_type,
+        mod_id,
+        mod_name,
+        detected_at
+      )
+      SELECT
+        $1::date,
+        incoming.change_type,
+        incoming.mod_id,
+        incoming.mod_name,
+        incoming.detected_at
+      FROM UNNEST(
+        $2::text[],
+        $3::text[],
+        $4::text[],
+        $5::timestamptz[]
+      ) AS incoming(change_type, mod_id, mod_name, detected_at)
+      WHERE
+        (incoming.detected_at AT TIME ZONE 'Europe/London')::date = $1::date
+        AND NOT EXISTS (
+          SELECT 1
+          FROM daily_mod_changes existing
+          WHERE existing.report_date = $1::date
+            AND existing.change_type = incoming.change_type
+            AND LOWER(existing.mod_name) = LOWER(incoming.mod_name)
+        )
+      ON CONFLICT (report_date, change_type, mod_id) DO NOTHING
+      RETURNING mod_id;
+    `, [
+      reportDate,
+      uniqueChanges.map(change => change.type),
+      uniqueChanges.map(change => change.modId),
+      uniqueChanges.map(change => change.name),
+      uniqueChanges.map(change => change.detectedAt)
+    ]);
+
+    const changesResult = await db.query(`
+      SELECT change_type, mod_id, mod_name, detected_at
+      FROM daily_mod_changes
+      WHERE report_date = $1::date
+      ORDER BY change_type ASC, LOWER(mod_name) ASC, mod_id ASC;
+    `, [reportDate]);
+    const modChanges = groupDailyModChanges(changesResult.rows);
+
+    await db.query(`
+      INSERT INTO daily_stats (
+        report_date,
+        mods_added_count,
+        mods_removed_count,
+        updated_at
+      )
+      VALUES ($1::date, $2::integer, $3::integer, NOW())
+      ON CONFLICT (report_date) DO UPDATE SET
+        mods_added_count = EXCLUDED.mods_added_count,
+        mods_removed_count = EXCLUDED.mods_removed_count,
+        updated_at = NOW();
+    `, [reportDate, modChanges.added.length, modChanges.removed.length]);
+
+    await db.query('COMMIT');
+
+    return {
+      insertedCount: insertedResult.rowCount ?? 0,
+      modChanges,
+      totals: {
+        added: modChanges.added.length,
+        removed: modChanges.removed.length
+      }
+    };
+  } catch (error) {
+    if (db) {
+      await db.query('ROLLBACK').catch(() => {});
+    }
+    console.error('❌ Failed to backfill daily mod changes:', error);
     throw error;
   } finally {
     if (db) db.release();
@@ -1893,6 +2022,20 @@ async function handleModsButton(interaction) {
 
 client.on('interactionCreate', async interaction => {
   try {
+    if (
+      interaction.isChatInputCommand() &&
+      interaction.commandName === 'backfillmods'
+    ) {
+      await handleBackfillModsCommand(interaction, {
+        client,
+        MOD_REMOVALS_CHANNEL_ID,
+        MOD_ADDED_CHANNEL_ID,
+        getYesterdayDailyReportData,
+        backfillDailyModChanges
+      });
+      return;
+    }
+
     if (interaction.isChatInputCommand() && interaction.commandName === 'test') {
       await handleDiagnosticCommand(interaction, {
         client,
@@ -2074,8 +2217,13 @@ client.once('clientReady', async () => {
   await client.application.commands.set([]);
 
   const guild = client.guilds.cache.first();
-  await guild.commands.set([changelogCommand, warnCommand, diagnosticCommand]);
-  console.log('/changelog, /warn and /test commands registered');
+  await guild.commands.set([
+    changelogCommand,
+    warnCommand,
+    diagnosticCommand,
+    backfillModsCommand
+  ]);
+  console.log('/changelog, /warn, /test and /backfillmods commands registered');
   console.log(`Discord bot connected as ${client.user.tag}`);
 
   await updateServerStatus();

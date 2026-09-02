@@ -16,6 +16,10 @@ import {
 import { DAILY_REPORT_SIGNATURE } from './dailyReportChart.js';
 import { buildDailyModChangeFields } from './dailyModChanges.js';
 import {
+  mergeHistoricalModChanges,
+  parseHistoricalModAlertEmbed
+} from './modAlertHistory.js';
+import {
   formatCapacityField,
   SERVER_QUEUE_CAPACITY
 } from './statusDisplay.js';
@@ -31,6 +35,7 @@ const REQUIRED_ENV_VARS = [
 ];
 
 const QUEUE_LEVELS = [10, 20, 25];
+const MOD_HISTORY_MAX_PAGES_PER_CHANNEL = 50;
 
 export const diagnosticCommand = new SlashCommandBuilder()
   .setName('test')
@@ -107,6 +112,11 @@ export const diagnosticCommand = new SlashCommandBuilder()
       .setDescription('Safely verify failsafe configuration without triggering it')
   );
 
+export const backfillModsCommand = new SlashCommandBuilder()
+  .setName('backfillmods')
+  .setDescription('Recover yesterday\'s mod history from TLC Command alerts')
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+
 function getDiagnosticAccessError(interaction) {
   if (interaction.user.id !== DIAGNOSTIC_OWNER_ID) {
     return '❌ You are not authorized to use TLC Command diagnostics.';
@@ -117,6 +127,120 @@ function getDiagnosticAccessError(interaction) {
   }
 
   return null;
+}
+
+async function fetchMessagesInWindow(
+  client,
+  channelId,
+  windowStartMs,
+  windowEndMs
+) {
+  const channel = await client.channels.fetch(channelId);
+
+  if (!channel || !channel.isTextBased() || !channel.messages?.fetch) {
+    throw new Error(`Channel ${channelId} does not support message history.`);
+  }
+
+  const messages = [];
+  let before;
+  let scannedCount = 0;
+  let pages = 0;
+  let reachedWindowStart = false;
+
+  while (pages < MOD_HISTORY_MAX_PAGES_PER_CHANNEL) {
+    const batch = await channel.messages.fetch({
+      limit: 100,
+      ...(before ? { before } : {})
+    });
+
+    if (batch.size === 0) {
+      reachedWindowStart = true;
+      break;
+    }
+
+    pages += 1;
+    let oldestMessage = null;
+
+    for (const message of batch.values()) {
+      scannedCount += 1;
+
+      if (
+        !oldestMessage ||
+        message.createdTimestamp < oldestMessage.createdTimestamp
+      ) {
+        oldestMessage = message;
+      }
+
+      if (
+        message.createdTimestamp >= windowStartMs &&
+        message.createdTimestamp < windowEndMs
+      ) {
+        messages.push(message);
+      }
+    }
+
+    if (!oldestMessage || oldestMessage.createdTimestamp < windowStartMs) {
+      reachedWindowStart = true;
+      break;
+    }
+
+    before = oldestMessage.id;
+  }
+
+  if (!reachedWindowStart) {
+    throw new Error(
+      `Message-history safety limit reached in #${channel.name ?? channelId}.`
+    );
+  }
+
+  return { messages, scannedCount };
+}
+
+async function collectHistoricalModChanges(context, reportData) {
+  const sources = [
+    { channelId: context.MOD_ADDED_CHANNEL_ID, type: 'added' },
+    { channelId: context.MOD_REMOVALS_CHANNEL_ID, type: 'removed' }
+  ];
+  const changes = [];
+  let scannedCount = 0;
+  let matchedAlertCount = 0;
+
+  for (const source of sources) {
+    const history = await fetchMessagesInWindow(
+      context.client,
+      source.channelId,
+      reportData.windowStartMs,
+      reportData.windowEndMs
+    );
+    scannedCount += history.scannedCount;
+
+    for (const message of history.messages) {
+      if (message.author?.id !== context.client.user.id) continue;
+
+      let messageMatched = false;
+
+      for (const embed of message.embeds ?? []) {
+        const parsedChanges = parseHistoricalModAlertEmbed(
+          embed,
+          source.type,
+          message.createdTimestamp
+        );
+
+        if (parsedChanges.length > 0) {
+          messageMatched = true;
+          changes.push(...parsedChanges);
+        }
+      }
+
+      if (messageMatched) matchedAlertCount += 1;
+    }
+  }
+
+  return {
+    changes: mergeHistoricalModChanges(changes),
+    matchedAlertCount,
+    scannedCount
+  };
 }
 
 function pass(name, details = 'OK') {
@@ -519,7 +643,12 @@ async function testPermissions(context) {
       ['Embeds', PermissionFlagsBits.EmbedLinks]
     ];
 
-    if (label === 'Status channel' || label === 'General / queue channel') {
+    if (
+      label === 'Status channel' ||
+      label === 'General / queue channel' ||
+      label === 'Mod removals channel' ||
+      label === 'Mod added channel'
+    ) {
       needed.push(['History', PermissionFlagsBits.ReadMessageHistory]);
     }
 
@@ -862,6 +991,90 @@ async function editDiagnosticReply(
     components: [],
     files
   });
+}
+
+export async function handleBackfillModsCommand(interaction, context) {
+  if (
+    !interaction.isChatInputCommand() ||
+    interaction.commandName !== 'backfillmods'
+  ) {
+    return false;
+  }
+
+  const accessError = getDiagnosticAccessError(interaction);
+
+  if (accessError) {
+    await interaction.reply({
+      content: accessError,
+      flags: MessageFlags.Ephemeral
+    });
+    return true;
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const reportData = await context.getYesterdayDailyReportData();
+  const history = await collectHistoricalModChanges(context, reportData);
+
+  if (history.changes.length === 0) {
+    await editDiagnosticReply(
+      interaction,
+      '📦 MOD HISTORY BACKFILL',
+      [
+        warn(
+          'Historical alerts',
+          `No TLC Command mod alerts were found for ${reportData.reportDate}.`
+        ),
+        pass('Production safety', 'No database rows or Discord messages were changed.')
+      ]
+    );
+    return true;
+  }
+
+  const backfill = await context.backfillDailyModChanges(
+    reportData.reportDate,
+    history.changes
+  );
+  const detailFields = buildDailyModChangeFields(backfill.modChanges);
+  const detailEmbed = new EmbedBuilder()
+    .setTitle('📦 RECOVERED MOD HISTORY')
+    .setDescription(`Report date: **${reportData.reportDate}**`)
+    .addFields({
+      name: '📊 RECOVERED TOTALS',
+      value:
+        `Added: **${backfill.totals.added}**\n` +
+        `Removed: **${backfill.totals.removed}**`,
+      inline: false
+    })
+    .setColor(0x57F287)
+    .setFooter({ text: DAILY_REPORT_SIGNATURE })
+    .setTimestamp();
+
+  if (detailFields.length > 0) {
+    detailEmbed.addFields(...detailFields);
+  }
+
+  await editDiagnosticReply(
+    interaction,
+    '📦 MOD HISTORY BACKFILL',
+    [
+      pass(
+        'Historical alert scan',
+        `${history.matchedAlertCount} TLC Command alert(s) found while ` +
+        `checking ${history.scannedCount} message(s).`
+      ),
+      pass(
+        'Database backfill',
+        `${backfill.insertedCount} new mod record(s) inserted for ` +
+        `${reportData.reportDate}.`
+      ),
+      pass('Duplicate protection', 'Running this command again will not duplicate records.'),
+      pass('Discord safety', 'No alerts, mentions or public messages were sent.')
+    ],
+    [detailEmbed]
+  );
+
+  return true;
 }
 
 export async function handleDiagnosticCommand(interaction, context) {
