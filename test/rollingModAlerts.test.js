@@ -65,7 +65,7 @@ test('groups simultaneous mods and keeps every later repeat', () => {
   assert.equal(countRollingModChanges(events), 3);
 });
 
-test('renders each event time and marks only the newest update', () => {
+test('renders each event date and time and marks only the newest update', () => {
   const events = groupRollingModEvents([
     {
       type: 'removed',
@@ -82,8 +82,9 @@ test('renders each event time and marks only the newest update', () => {
   ]);
   const description = buildRollingModAlertDescription(events);
 
-  assert.match(description, /<t:1788354000:t>/);
-  assert.match(description, /<t:1788356340:t>\*\* — \*\*LATEST\*\*/);
+  assert.match(description, /<t:1788354000:f>/);
+  assert.match(description, /<t:1788356340:f>\*\* — \*\*LATEST\*\*/);
+  assert.doesNotMatch(description, /<t:\d+:t>/);
   assert.equal((description.match(/LATEST/g) ?? []).length, 1);
   assert.ok(description.indexOf('Alpha') < description.indexOf('Bravo'));
 });
