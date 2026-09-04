@@ -1,5 +1,6 @@
 import { REST, Routes, SlashCommandBuilder } from 'discord.js';
 
+import './serverModeBridge.js';
 import './serverModeOverlay.js';
 import './bot.js';
 
@@ -42,7 +43,6 @@ async function ensureServerModeCommand() {
   }
 
   try {
-    // The first segment of a Discord bot token encodes the bot/application ID.
     const applicationId = Buffer
       .from(token.split('.')[0], 'base64')
       .toString('utf8');
@@ -73,8 +73,6 @@ async function ensureServerModeCommand() {
   }
 }
 
-// The main bot replaces its guild command set during clientReady.
-// Register /servermode just after that startup pass has completed.
 setTimeout(() => {
   ensureServerModeCommand().catch(error => {
     console.error('❌ [SERVERMODE] Delayed registration failed:', error);
