@@ -1,41 +1,41 @@
 {
-	"name": "gamestatus-bot",
-	"version": "1.2.1",
-	"description": "Stay in the loop with our Discord bot for instant server status updates!",
-	"main": "src/bot.js",
-	"type": "module",
-	"engines": {
-		"node": ">=20.9.0"
-	},
-	"scripts": {
-		"start": "node src/bot.js",
-		"dev": "nodemon src/bot.js",
-		"test": "node --test"
-	},
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/DarklandServers/GameStatus-Bot.git"
-	},
-	"bugs": {
-		"url": "https://github.com/DarklandServers/GameStatus-Bot/issues"
-	},
-	"homepage": "https://github.com/DarklandServers/GameStatus-Bot#readme",
-	"keywords": [],
-	"author": "Darkland Studio",
-	"license": "ISC",
-	"packageManager": "pnpm@10.5.2",
-	"devDependencies": {
-		"nodemon": "^3.1.9"
-	},
-	"dependencies": {
-		"boxen": "^8.0.1",
-		"chalk": "^5.4.1",
-		"dejavu-fonts-ttf": "2.37.3",
-		"discord.js": "^14.18.0",
-		"gamedig": "^5.2.0",
-		"node-cron": "^4.6.0",
-		"node-fetch": "^3.3.2",
-		"pg": "^8.23.0",
-		"sharp": "^0.35.0"
-	}
+  "name": "gamestatus-bot",
+  "version": "1.2.1",
+  "description": "Stay in the loop with our Discord bot for instant server status updates!",
+  "main": "src/start.js",
+  "type": "module",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "start": "node src/start.js",
+    "dev": "nodemon src/start.js",
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DarklandServers/GameStatus-Bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DarklandServers/GameStatus-Bot/issues"
+  },
+  "homepage": "https://github.com/DarklandServers/GameStatus-Bot#readme",
+  "keywords": [],
+  "author": "Darkland Studio",
+  "license": "ISC",
+  "packageManager": "pnpm@10.5.2",
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  },
+  "dependencies": {
+    "boxen": "^8.0.1",
+    "chalk": "^5.4.1",
+    "dejavu-fonts-ttf": "2.37.3",
+    "discord.js": "^14.18.0",
+    "gamedig": "^5.2.0",
+    "node-cron": "^4.6.0",
+    "node-fetch": "^3.3.2",
+    "pg": "^8.23.0",
+    "sharp": "^0.35.0"
+  }
 }
