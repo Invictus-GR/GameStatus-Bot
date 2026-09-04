@@ -411,25 +411,6 @@ const serverModeCommand = new SlashCommandBuilder()
       .setDescription('Return the status panel to live ArmaHQ monitoring')
   );
 
-async function registerServerModeCommand(client) {
-  const guild = client.guilds.cache.first();
-  if (!guild) {
-    throw new Error('No guild available for /servermode registration.');
-  }
-
-  const commands = await guild.commands.fetch();
-  const existing = commands.find(command => command.name === 'servermode');
-  const commandData = serverModeCommand.toJSON();
-
-  if (existing) {
-    await guild.commands.edit(existing.id, commandData);
-  } else {
-    await guild.commands.create(commandData);
-  }
-
-  console.log('✅ [SERVERMODE] /servermode command registered.');
-}
-
 async function handleServerModeInteraction(interaction) {
   if (!interaction.isChatInputCommand() || interaction.commandName !== 'servermode') {
     return;
@@ -490,27 +471,58 @@ function patchClientPresence(client) {
   };
 }
 
+function patchGuildCommandRegistration(client) {
+  const guild = client.guilds.cache.first();
+  if (!guild) {
+    console.error('❌ [SERVERMODE] No guild available for command registration patch.');
+    return;
+  }
+
+  const commandManager = guild.commands;
+  const originalSet = commandManager.set.bind(commandManager);
+
+  commandManager.set = async (commands, guildId) => {
+    const commandList = Array.isArray(commands) ? [...commands] : commands;
+
+    if (Array.isArray(commandList)) {
+      const alreadyIncluded = commandList.some(command => {
+        const data = typeof command?.toJSON === 'function' ? command.toJSON() : command;
+        return data?.name === 'servermode';
+      });
+
+      if (!alreadyIncluded) {
+        commandList.push(serverModeCommand);
+      }
+    }
+
+    const result = await originalSet(commandList, guildId);
+    console.log('✅ [SERVERMODE] /servermode registered with the main command set.');
+    return result;
+  };
+}
+
 const originalClientLogin = Client.prototype.login;
 Client.prototype.login = function serverModeAwareLogin(token) {
   capturedClient = this;
-
   this.on('interactionCreate', handleServerModeInteraction);
 
-  this.once('clientReady', async () => {
+  this.prependOnceListener('clientReady', async () => {
     try {
       patchClientPresence(this);
-
-      // The main bot registers its normal guild commands in its own ready handler.
-      // Give that registration a moment to finish, then add /servermode without
-      // replacing any of the existing commands.
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      await registerServerModeCommand(this);
-
-      if (isManualMode()) {
-        await renderManualPanel();
-      }
+      patchGuildCommandRegistration(this);
     } catch (error) {
       console.error('❌ [SERVERMODE] Startup integration failed:', error);
+    }
+  });
+
+  this.once('clientReady', async () => {
+    if (!isManualMode()) return;
+
+    try {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      await renderManualPanel();
+    } catch (error) {
+      console.error('❌ [SERVERMODE] Could not restore manual panel:', error);
     }
   });
 
