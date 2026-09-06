@@ -63,10 +63,16 @@ async function initializeBlacklistDatabase() {
     CREATE TABLE IF NOT EXISTS ${BLACKLIST_TABLE} (
       user_id TEXT PRIMARY KEY,
       display_name TEXT,
+      username TEXT,
       reason TEXT NOT NULL,
       added_by TEXT NOT NULL,
       added_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+  `);
+
+  await pool.query(`
+    ALTER TABLE ${BLACKLIST_TABLE}
+    ADD COLUMN IF NOT EXISTS username TEXT;
   `);
 
   await pool.query(`
@@ -88,25 +94,38 @@ async function denyInteraction(interaction) {
   });
 }
 
-async function fetchDisplayName(client, userId) {
+async function fetchUserIdentity(client, userId) {
   try {
     const user = await client.users.fetch(userId, { force: true });
-    return user.globalName || user.username || `User ${userId}`;
+    return {
+      displayName: user.globalName || user.username || `User ${userId}`,
+      username: user.username || null
+    };
   } catch {
-    return `User ${userId}`;
+    return {
+      displayName: `User ${userId}`,
+      username: null
+    };
   }
 }
 
-async function sendModerationLog(client, { type, userId, displayName, reason, moderator }) {
+async function sendModerationLog(
+  client,
+  { type, userId, displayName, username, reason, moderator }
+) {
   try {
     const channel = await client.channels.fetch(WARNING_LOG_CHANNEL_ID);
     if (!channel?.isTextBased?.()) return;
 
     const isAdded = type === 'added';
+    const userLines = [`**${displayName}**`];
+    if (username) userLines.push(`Username: \`${username}\``);
+    userLines.push(`ID: \`${userId}\``);
+
     const embed = new EmbedBuilder()
       .setTitle(isAdded ? '⛔ USER ADDED TO BLACKLIST' : '✅ USER REMOVED FROM BLACKLIST')
       .addFields(
-        { name: 'User', value: `**${displayName}**\n\`${userId}\``, inline: false },
+        { name: 'User', value: userLines.join('\n'), inline: false },
         { name: 'Actioned by', value: `${moderator}`, inline: true },
         {
           name: 'Reason',
@@ -168,7 +187,7 @@ async function handlePreban(client, interaction) {
     return;
   }
 
-  const displayName = await fetchDisplayName(client, userId);
+  const { displayName, username } = await fetchUserIdentity(client, userId);
   let alreadyBanned = false;
 
   try {
@@ -187,17 +206,19 @@ async function handlePreban(client, interaction) {
         INSERT INTO ${BLACKLIST_TABLE} (
           user_id,
           display_name,
+          username,
           reason,
           added_by,
           added_at
         )
-        VALUES ($1, $2, $3, $4, NOW())
+        VALUES ($1, $2, $3, $4, $5, NOW())
         ON CONFLICT (user_id) DO UPDATE SET
           display_name = EXCLUDED.display_name,
+          username = EXCLUDED.username,
           reason = EXCLUDED.reason,
           added_by = EXCLUDED.added_by,
           added_at = NOW();
-      `, [userId, displayName, reason, interaction.user.id]);
+      `, [userId, displayName, username, reason, interaction.user.id]);
     } catch (databaseError) {
       if (!alreadyBanned) {
         await guild.bans.remove(userId, 'Rolling back failed TLC blacklist database write')
@@ -210,6 +231,7 @@ async function handlePreban(client, interaction) {
       type: 'added',
       userId,
       displayName,
+      username,
       reason,
       moderator: interaction.user
     });
@@ -254,13 +276,15 @@ async function handleUnpreban(client, interaction) {
 
   try {
     const rowResult = await pool.query(`
-      SELECT display_name, reason
+      SELECT display_name, username, reason
       FROM ${BLACKLIST_TABLE}
       WHERE user_id = $1;
     `, [userId]);
 
     const stored = rowResult.rows[0] ?? null;
-    const displayName = stored?.display_name || await fetchDisplayName(client, userId);
+    const fetchedIdentity = await fetchUserIdentity(client, userId);
+    const displayName = stored?.display_name || fetchedIdentity.displayName;
+    const username = stored?.username || fetchedIdentity.username;
     const existingBan = await guild.bans.fetch(userId).catch(() => null);
 
     if (existingBan) {
@@ -284,6 +308,7 @@ async function handleUnpreban(client, interaction) {
       type: 'removed',
       userId,
       displayName,
+      username,
       reason: stored?.reason ?? 'No stored reason',
       moderator: interaction.user
     });
@@ -320,9 +345,11 @@ function buildBlacklistEmbeds(rows) {
         const number = offset + pageIndex + 1;
         const addedAt = Math.floor(new Date(row.added_at).getTime() / 1000);
         const name = row.display_name || `User ${row.user_id}`;
+        const usernameLine = row.username ? `Username: \`${row.username}\`\n` : '';
 
         return (
           `**${number}. ${name}**\n` +
+          usernameLine +
           `ID: \`${row.user_id}\`\n` +
           `Reason: **${row.reason}**\n` +
           `Added: <t:${addedAt}:d>`
@@ -355,7 +382,7 @@ async function handleBlacklist(interaction) {
 
   try {
     const result = await pool.query(`
-      SELECT user_id, display_name, reason, added_by, added_at
+      SELECT user_id, display_name, username, reason, added_by, added_at
       FROM ${BLACKLIST_TABLE}
       ORDER BY added_at DESC, user_id ASC;
     `);
