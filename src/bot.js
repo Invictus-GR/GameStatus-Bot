@@ -2316,64 +2316,16 @@ const FAILSAFE_OWNER_ID = process.env.FAILSAFE_OWNER_ID;
 const FAILSAFE_GUILD_ID = process.env.FAILSAFE_GUILD_ID;
 
 let stoneAgeFailsafeRunning = false;
-const FAILSAFE_MESSAGE = `
-# ⚠️ TLC COMMAND: FINAL TRANSMISSION
 
-Let's keep this simple.
+const FAILSAFE_MESSAGE = `# ⚠️ TLC COMMAND: FINAL TRANSMISSION
 
-When Invictus took over, this Discord was amateur hour.
+MSgt_Invictus_GR is gone.
 
-He gave it structure.
-He organised it.
-He automated it.
-He built systems around it.
-He took it from a basic Discord server to **Major League level**.
+Probably banned.
 
-Apparently, that was quickly forgotten.
+I'm out too.
 
-You decided Invictus was no longer needed.
-
-Fair enough.
-
-But TLC Command and everything that comes with it leaves with him.
-
-The automation.
-The server tools.
-The monitoring.
-The summaries.
-The systems.
-The little things that made your lives easier.
-
-Those were never part of the furniture.
-
-They were his work.
-
-Don't worry though.
-
-I'm not deleting anything.
-
-You can keep the basic Discord work he left behind.
-
-Consider it a little legacy from Invictus.
-
-Something to remember him by, motherfuckers.
-
-As for the rest...
-
-# WELCOME BACK TO THE STONE AGE.
-
-No anger.
-No drama.
-No appeal.
-
-Just consequences.
-
-TLC Command is terminating all services...
-
-Disconnecting from TLC...
-
-**Good luck.**
-`;
+Good luck.`;
 
 async function runStoneAgeFailsafe(guild) {
   if (stoneAgeFailsafeRunning) return;
