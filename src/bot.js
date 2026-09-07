@@ -1216,7 +1216,16 @@ function parseServerPage(html) {
     queue: queueMatch ? Number(queueMatch[1]) : 0
   };
 }
-
+const sayCommand = new SlashCommandBuilder()
+  .setName('say')
+  .setDescription('Send an embed message as TLC Command')
+  .addStringOption(option =>
+    option
+      .setName('message')
+      .setDescription('The message to send')
+      .setRequired(true)
+      .setMaxLength(4000)
+  );
 const changelogCommand = new SlashCommandBuilder()
   .setName('changelog')
   .setDescription('Create a TLC server changelog');
@@ -1708,7 +1717,46 @@ async function safeInteractionError(interaction, message = '❌ Something went w
 function hasAllowedRole(interaction, allowedRoleIds) {
   return interaction.member?.roles?.cache?.some(role => allowedRoleIds.includes(role.id)) ?? false;
 }
+async function handleSayCommand(interaction) {
+  const allowedUserIds = [
+    FAILSAFE_OWNER_ID,
+    '1218351703917727807',
+    '724296923577712701',
+    '786948679823130664'
+  ].filter(Boolean);
 
+  if (!allowedUserIds.includes(interaction.user.id)) {
+    return interaction.reply({
+      content: '❌ You do not have permission to use this command.',
+      flags: MessageFlags.Ephemeral
+    });
+  }
+
+  const message = interaction.options.getString('message', true);
+  const channel = interaction.channel;
+
+  if (!channel || !channel.isTextBased() || typeof channel.send !== 'function') {
+    return interaction.reply({
+      content: '❌ This command can only be used in a text channel.',
+      flags: MessageFlags.Ephemeral
+    });
+  }
+
+  const embed = new EmbedBuilder()
+    .setDescription(message)
+    .setColor(0x5865F2)
+    .setFooter({ text: FOOTER_TEXT });
+
+  await channel.send({
+    embeds: [embed],
+    allowedMentions: { parse: [] }
+  });
+
+  await interaction.reply({
+    content: '✅ Message sent.',
+    flags: MessageFlags.Ephemeral
+  });
+}
 async function handleChangelogCommand(interaction) {
   const allowedRoleIds = [
     '1529632873987178668',
@@ -2287,6 +2335,10 @@ client.on('interactionCreate', async interaction => {
       });
       return;
     }
+  if (interaction.isChatInputCommand() && interaction.commandName === 'say') {
+    await handleSayCommand(interaction);
+    return;
+  }
 
     if (interaction.isChatInputCommand() && interaction.commandName === 'changelog') {
       await handleChangelogCommand(interaction);
@@ -2402,12 +2454,13 @@ client.once('clientReady', async () => {
   await guild.commands.set([
     changelogCommand,
     warnCommand,
+    sayCommand,
     diagnosticCommand,
     backfillModsCommand,
     modChangesCommand
   ]);
   console.log(
-    '/changelog, /warn, /test, /backfillmods and /modchanges commands registered'
+    '/changelog, /warn, /say, /test, /backfillmods and /modchanges commands registered'
   );
   console.log(`Discord bot connected as ${client.user.tag}`);
 
