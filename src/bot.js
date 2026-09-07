@@ -1221,6 +1221,13 @@ const sayCommand = new SlashCommandBuilder()
   .setDescription('Send an embed message as TLC Command')
   .addStringOption(option =>
     option
+      .setName('title')
+      .setDescription('The embed title')
+      .setRequired(true)
+      .setMaxLength(256)
+  )
+  .addStringOption(option =>
+    option
       .setName('message')
       .setDescription('The message to send')
       .setRequired(true)
@@ -1731,7 +1738,7 @@ async function handleSayCommand(interaction) {
       flags: MessageFlags.Ephemeral
     });
   }
-
+const title = interaction.options.getString('title', true);
   const message = interaction.options.getString('message', true);
   const channel = interaction.channel;
 
@@ -1743,9 +1750,10 @@ async function handleSayCommand(interaction) {
   }
 
   const embed = new EmbedBuilder()
-    .setDescription(message)
-    .setColor(0x5865F2)
-    .setFooter({ text: FOOTER_TEXT });
+  .setTitle(title)
+  .setDescription(message)
+  .setColor(0x5865F2)
+  .setFooter({ text: FOOTER_TEXT });
 
   await channel.send({
     embeds: [embed],
