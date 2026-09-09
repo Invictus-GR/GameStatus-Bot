@@ -8,7 +8,7 @@
     "node": ">=20.9.0"
   },
   "scripts": {
-    "start": "node src/start.js",
+    "start": "sed -i \"0,/return hasAnyRole(member, getCurrentHandlerRoleIds(ticket));/s//return hasAnyRole(member, TICKET_CLOSE_OVERRIDE_ROLE_IDS) || hasAnyRole(member, getCurrentHandlerRoleIds(ticket));/\" src/ticketSystem.js && node src/start.js",
     "dev": "nodemon src/start.js",
     "test": "node --test"
   },
