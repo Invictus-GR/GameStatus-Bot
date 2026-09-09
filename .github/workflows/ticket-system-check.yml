@@ -1,0 +1,37 @@
+name: TLC Ticket System Check
+
+on:
+  push:
+    branches:
+      - feature/tlc-ticket-system
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+
+      - name: Syntax check ticket system
+        run: |
+          node --check src/ticketSystem.js
+          node --check src/ticketBootstrap.js
+          node --check src/config/tickets.js
+          node --check src/start.js
+
+      - name: Run tests
+        run: npm test
