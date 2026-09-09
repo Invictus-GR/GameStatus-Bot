@@ -15,6 +15,7 @@ import {
 
 const SUPPORT_MENU_ID = 'tlc_ticket_type';
 const COMMAND_NAME = 'supportbanner';
+const DELAYED_REGISTRATION_MS = 105_000;
 
 function hasOverrideRole(member) {
   return member?.roles?.cache?.some(role =>
@@ -88,7 +89,7 @@ async function applyUploadedBanner(client, attachment) {
   console.log(`[TICKETS] Support banner replaced from Discord upload (${filename}, ${buffer.length} bytes).`);
 }
 
-async function registerSupportBannerCommand(client) {
+async function registerSupportBannerCommand(client, source = 'initial') {
   const token = process.env.DISCORD_BOT_TOKEN;
   const guildId = process.env.FAILSAFE_GUILD_ID;
   if (!token || !guildId) {
@@ -129,7 +130,7 @@ async function registerSupportBannerCommand(client) {
     await rest.post(route, { body: command.toJSON() });
   }
 
-  console.log('✅ [TICKETS] /supportbanner command registered.');
+  console.log(`✅ [TICKETS] /supportbanner command registered (${source}).`);
 }
 
 const initializedClients = new WeakSet();
@@ -142,9 +143,15 @@ Client.prototype.login = function patchedSupportBannerLogin(...args) {
     initializedClients.add(client);
 
     client.once('clientReady', () => {
-      void registerSupportBannerCommand(client).catch(error => {
-        console.error('❌ [TICKETS] /supportbanner registration failed:', error);
+      void registerSupportBannerCommand(client, 'initial').catch(error => {
+        console.error('❌ [TICKETS] /supportbanner initial registration failed:', error);
       });
+
+      setTimeout(() => {
+        void registerSupportBannerCommand(client, 'post-core-registration').catch(error => {
+          console.error('❌ [TICKETS] /supportbanner delayed registration failed:', error);
+        });
+      }, DELAYED_REGISTRATION_MS);
     });
 
     client.on('interactionCreate', interaction => {
