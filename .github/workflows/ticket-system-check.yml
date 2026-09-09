@@ -1,0 +1,48 @@
+name: TLC Ticket System Check
+
+on:
+  push:
+    branches:
+      - feature/tlc-ticket-system
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.5.2
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Syntax check ticket system
+        run: |
+          node --check src/ticketSystem.js
+          node --check src/ticketBootstrap.js
+          node --check src/ticketSupportBanner.js
+          node --check src/config/tickets.js
+          node --check src/start.js
+
+      - name: Verify support banner asset
+        run: test -s assets/tlc-support-banner.jpg
+
+      - name: Run tests
+        run: pnpm test

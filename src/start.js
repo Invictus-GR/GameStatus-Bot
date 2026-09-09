@@ -3,6 +3,7 @@ import { REST, Routes, SlashCommandBuilder } from 'discord.js';
 import './serverModeBridge.js';
 import './serverModeOverlay.js';
 import './blacklistBridge.js';
+import './ticketBootstrap.js';
 import './bot.js';
 
 const serverModeCommand = new SlashCommandBuilder()
