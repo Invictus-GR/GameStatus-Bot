@@ -37,8 +37,12 @@ jobs:
         run: |
           node --check src/ticketSystem.js
           node --check src/ticketBootstrap.js
+          node --check src/ticketSupportBanner.js
           node --check src/config/tickets.js
           node --check src/start.js
+
+      - name: Verify support banner asset
+        run: test -s assets/tlc-support-banner.jpg
 
       - name: Run tests
         run: pnpm test
