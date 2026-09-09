@@ -2,6 +2,7 @@ import { Client } from 'discord.js';
 import pg from 'pg';
 
 import { initializeTicketSystem } from './ticketSystem.js';
+import { applyTicketSupportBanner } from './ticketSupportBanner.js';
 
 const { Pool } = pg;
 const initializedClients = new WeakSet();
@@ -18,11 +19,14 @@ Client.prototype.login = function patchedLogin(...args) {
         connectionString: process.env.DATABASE_URL
       });
 
-      void initializeTicketSystem({
-        client,
-        pool,
-        footerText: 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC.'
-      }).catch(async error => {
+      void (async () => {
+        await initializeTicketSystem({
+          client,
+          pool,
+          footerText: 'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC.'
+        });
+        await applyTicketSupportBanner(client);
+      })().catch(async error => {
         console.error('❌ [TICKETS] Ticket system initialization failed:', error);
         await pool.end().catch(() => {});
       });
