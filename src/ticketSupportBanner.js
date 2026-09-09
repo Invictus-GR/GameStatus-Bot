@@ -29,6 +29,13 @@ export async function applyTicketSupportBanner(client) {
     throw new Error('TLC support panel does not contain an embed.');
   }
 
+  // A banner uploaded with /supportbanner is stored as a Discord message attachment.
+  // Preserve it across restarts/redeploys instead of replacing it with the legacy GitHub fallback.
+  if (panel.attachments.size > 0) {
+    console.log('[TICKETS] Existing Discord-hosted support banner preserved.');
+    return panel;
+  }
+
   const embed = EmbedBuilder.from(currentEmbed)
     .setImage(SUPPORT_BANNER_URL);
 
@@ -37,6 +44,6 @@ export async function applyTicketSupportBanner(client) {
     attachments: []
   });
 
-  console.log('[TICKETS] Exact TLC support banner applied from GitHub.');
+  console.log('[TICKETS] TLC support banner fallback applied from GitHub.');
   return panel;
 }
