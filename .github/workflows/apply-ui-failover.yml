@@ -1,4 +1,4 @@
-name: Apply UI failover
+name: Apply UI data source display
 on:
   push:
     branches: [ui-speed-fix]
@@ -16,7 +16,7 @@ jobs:
         with:
           node-version: '20'
       - run: corepack enable && pnpm install --frozen-lockfile
-      - name: Patch and validate
+      - name: Patch data source display
         shell: python
         run: |
           from pathlib import Path
@@ -27,25 +27,46 @@ jobs:
             if c!=1: raise SystemExit(f'{n}: expected 1 match, got {c}')
             s=s.replace(a,b,1)
 
-          one("const SERVER_NAME = 'EU | TLC | THE LAST COALITION | UHC | PVP | PERSISTENT RANK | DRONES';",
-              "const SERVER_NAME = 'EU | TLC | THE LAST COALITION | UHC | PVP | PERSISTENT RANK | DRONES';\nconst BATTLEMETRICS_SERVER_URL = 'https://www.battlemetrics.com/servers/reforger/40653024';",
-              'battlemetrics constant')
+          one("let currentServerViewUrl = SERVER_URL;",
+              "let currentServerViewUrl = SERVER_URL;\nlet currentStatusDataSource = 'Unavailable';",
+              'data source state')
 
-          one("let previousModSnapshot = null;",
-              "let previousModSnapshot = null;\nlet currentServerViewUrl = SERVER_URL;",
-              'server view state')
+          one("  activeMods = null\n}) {",
+              "  activeMods = null,\n  dataSource = 'Unavailable'\n}) {",
+              'render data source param')
 
-          old_button="""function createButton() {\n  return new ActionRowBuilder().addComponents(\n    new ButtonBuilder()\n      .setLabel('View Server')\n      .setEmoji('🎮')\n      .setStyle(ButtonStyle.Link)\n      .setURL(SERVER_URL),\n    new ButtonBuilder()\n      .setCustomId('show_mods')\n      .setLabel('Show Mods')\n      .setEmoji('📦')\n      .setStyle(ButtonStyle.Secondary)\n  );\n}"""
-          new_button="""function createButton() {\n  const serverButton = new ButtonBuilder()\n    .setLabel('View Server')\n    .setEmoji('🎮');\n\n  if (currentServerViewUrl) {\n    serverButton\n      .setStyle(ButtonStyle.Link)\n      .setURL(currentServerViewUrl);\n  } else {\n    serverButton\n      .setCustomId('server_link_unavailable')\n      .setStyle(ButtonStyle.Secondary)\n      .setDisabled(true);\n  }\n\n  return new ActionRowBuilder().addComponents(\n    serverButton,\n    new ButtonBuilder()\n      .setCustomId('show_mods')\n      .setLabel('Show Mods')\n      .setEmoji('📦')\n      .setStyle(ButtonStyle.Secondary)\n  );\n}"""
-          one(old_button,new_button,'dynamic server button')
+          one("        {\n          name: '📦 Active Mods',\n          value: activeMods === null ? '**Updating…**' : `**${activeMods}**`,\n          inline: true\n        }\n      )",
+              "        {\n          name: '📦 Active Mods',\n          value: activeMods === null ? '**Updating…**' : `**${activeMods}**`,\n          inline: true\n        },\n        {\n          name: '🔗 Data Source',\n          value: dataSource === 'ReforgerMods' ? '**ReforgerMods (Fallback)**' : `**${dataSource}**`,\n          inline: true\n        }\n      )",
+              'online data source field')
 
-          anchor="""      serverData = result.value;\n      if (result.source === 'ReforgerMods') {\n        console.warn('Primary data source unavailable; using ReforgerMods fallback for status.');\n      }"""
-          repl="""      serverData = result.value;\n      if (result.source === 'ArmaHQ') {\n        currentServerViewUrl = SERVER_URL;\n      } else {\n        const controller = new AbortController();\n        const timeout = setTimeout(() => controller.abort(), 5000);\n        try {\n          const response = await fetch(BATTLEMETRICS_SERVER_URL, { signal: controller.signal });\n          currentServerViewUrl = response.status < 500 ? BATTLEMETRICS_SERVER_URL : null;\n        } catch {\n          currentServerViewUrl = null;\n        } finally {\n          clearTimeout(timeout);\n        }\n        console.warn('Primary data source unavailable; using ReforgerMods fallback for status.');\n      }"""
-          one(anchor,repl,'status source link routing')
+          one("      .addFields({\n        name: '📡 Status',\n        value: '**OFFLINE**',\n        inline: true\n      })",
+              "      .addFields(\n        {\n          name: '📡 Status',\n          value: '**OFFLINE**',\n          inline: true\n        },\n        {\n          name: '🔗 Data Source',\n          value: dataSource === 'ReforgerMods' ? '**ReforgerMods (Fallback)**' : `**${dataSource}**`,\n          inline: true\n        }\n      )",
+              'offline data source field')
 
-          old_mods="""  if (isShowMods) {\n    mods = await fetchServerMods();\n    setCachedMods(interaction.user.id, mods);\n  } else {\n    mods = getCachedMods(interaction.user.id);\n\n    if (!mods) {\n      mods = await fetchServerMods();\n      setCachedMods(interaction.user.id, mods);\n    }\n  }"""
-          new_mods="""  const liveSnapshot = previousModSnapshot?.size\n    ? [...previousModSnapshot.values()]\n    : null;\n\n  if (isShowMods) {\n    mods = liveSnapshot ?? await fetchServerMods();\n    setCachedMods(interaction.user.id, mods);\n  } else {\n    mods = getCachedMods(interaction.user.id);\n\n    if (!mods) {\n      mods = liveSnapshot ?? await fetchServerMods();\n      setCachedMods(interaction.user.id, mods);\n    }\n  }"""
-          one(old_mods,new_mods,'mods snapshot fast path')
+          one("        name: '📡 Data Source',\n        value: '**All status data sources temporarily unavailable**',",
+              "        name: '🔗 Data Source',\n        value: '**Unavailable**',",
+              'unavailable data source field')
+
+          one("      serverData = result.value;\n      if (result.source === 'ArmaHQ') {",
+              "      serverData = result.value;\n      currentStatusDataSource = result.source;\n      if (result.source === 'ArmaHQ') {",
+              'capture source')
+
+          one("  await setBotPresence('🟠 STATUS DATA UNAVAILABLE', 'idle');",
+              "  currentStatusDataSource = 'Unavailable';\n  currentServerViewUrl = null;\n  await setBotPresence('🟠 STATUS DATA UNAVAILABLE', 'idle');",
+              'unavailable source state')
+
+          one("    await renderStatusPanel({ state: 'unavailable' });",
+              "    await renderStatusPanel({ state: 'unavailable', dataSource: currentStatusDataSource });",
+              'unavailable render source')
+
+          one("        await renderStatusPanel({ state: 'offline' });",
+              "        await renderStatusPanel({ state: 'offline', dataSource: currentStatusDataSource });",
+              'offline render source')
+
+          one("        activeMods: previousModSnapshot?.size ?? null\n      });",
+              "        activeMods: previousModSnapshot?.size ?? null,\n        dataSource: currentStatusDataSource\n      });",
+              'online render source')
+
           p.write_text(s)
       - run: node --check src/bot.js
       - run: pnpm test
@@ -54,5 +75,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src/bot.js
-          git commit -m 'Add resilient server link failover and instant mod view'
+          git commit -m 'Show active data source in status embed'
           git push origin ui-speed-fix
