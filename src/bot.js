@@ -73,6 +73,10 @@ import {
   formatCapacityField,
   SERVER_QUEUE_CAPACITY
 } from './statusDisplay.js';
+import {
+  createReforgerModsClient,
+  withFallback
+} from './serverDataSources.js';
 
 const { Pool } = pg;
 const pool = new Pool({
@@ -960,6 +964,10 @@ const client = new Client({
 const SERVER_URL =
   'https://www.armahq.com/servers/1d8007f8-bc4d-45a6-86db-f1091aed4300';
 const SERVER_NAME = 'EU | TLC | THE LAST COALITION | UHC | PVP | PERSISTENT RANK | DRONES';
+const reforgerModsClient = createReforgerModsClient({
+  fetchImpl: fetch,
+  serverName: SERVER_NAME
+});
 const CHANNEL_ID = '1543309765243834428';
 const CHANGELOG_CHANNEL_ID = '1535567655442972722';
 const WARNING_LOG_CHANNEL_ID = '1540989189380640858';
@@ -1463,7 +1471,7 @@ async function renderStatusPanel({
       .setDescription('### 🟠 STATUS DATA UNAVAILABLE')
       .addFields({
         name: '📡 Data Source',
-        value: '**ArmaHQ temporarily unavailable**',
+        value: '**All status data sources temporarily unavailable**',
         inline: true
       })
       .setColor(0xFEE75C);
@@ -1588,7 +1596,7 @@ async function flushPendingServerStatusAlerts() {
 async function handleDataSourceFailure(error) {
   consecutiveDataSourceFailures += 1;
   console.error(
-    `ArmaHQ status check failed (${consecutiveDataSourceFailures} consecutive):`,
+    `All status data sources failed (${consecutiveDataSourceFailures} consecutive):`,
     error.message
   );
 
@@ -1617,8 +1625,18 @@ async function updateServerStatus() {
     let serverData;
 
     try {
-      const html = await fetchArmaHQPage();
-      serverData = parseServerPage(html);
+      const result = await withFallback({
+        operation: 'status',
+        primary: async () => {
+          const html = await fetchArmaHQPage();
+          return parseServerPage(html);
+        },
+        fallback: () => reforgerModsClient.fetchStatus()
+      });
+      serverData = result.value;
+      if (result.source === 'ReforgerMods') {
+        console.warn('Primary data source unavailable; using ReforgerMods fallback for status.');
+      }
     } catch (error) {
       await handleDataSourceFailure(error);
       return;
@@ -1909,7 +1927,7 @@ async function handleWarnCommand(interaction) {
   });
 }
 
-async function fetchServerMods() {
+async function fetchArmaHQMods() {
   const html = await fetchArmaHQPage();
   const modRegex =
     /\{\\"name\\":\\"([^"\\]*)\\",\\"modId\\":\\"([^"\\]*)\\",\\"version\\":\\"([^"\\]*)\\"\}/g;
@@ -1929,9 +1947,29 @@ async function fetchServerMods() {
     ...new Map(mods.map(mod => [mod.modId, mod])).values()
   ];
 
-  return uniqueMods.sort((a, b) =>
+  const sortedMods = uniqueMods.sort((a, b) =>
     a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })
   );
+
+  if (sortedMods.length === 0) {
+    throw new ArmaHQError('ArmaHQ page loaded, but server mod list was empty');
+  }
+
+  return sortedMods;
+}
+
+async function fetchServerMods() {
+  const result = await withFallback({
+    operation: 'mod list',
+    primary: fetchArmaHQMods,
+    fallback: () => reforgerModsClient.fetchMods()
+  });
+
+  if (result.source === 'ReforgerMods') {
+    console.warn('Primary data source unavailable; using ReforgerMods fallback for mods.');
+  }
+
+  return result.value;
 }
 
 function createModAlertPayload(alert, history) {
