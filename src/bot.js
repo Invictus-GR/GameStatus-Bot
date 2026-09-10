@@ -1005,6 +1005,7 @@ const QUEUE_ALERT_TITLES = new Set([
 
 let previousModSnapshot = null;
 let currentServerViewUrl = SERVER_URL;
+let currentStatusDataSource = 'Unavailable';
 let pendingRemovedMods = new Map();
 let massRemovalCandidate = null;
 const pendingModAlerts = new Map();
@@ -1435,7 +1436,8 @@ async function renderStatusPanel({
   players = null,
   maxPlayers = null,
   queue = 0,
-  activeMods = null
+  activeMods = null,
+  dataSource = 'Unavailable'
 }) {
   const channel = await getChannel();
   const guildIcon = channel.guild?.iconURL({ extension: 'png', size: 256 });
@@ -1467,24 +1469,36 @@ async function renderStatusPanel({
           name: '📦 Active Mods',
           value: activeMods === null ? '**Updating…**' : `**${activeMods}**`,
           inline: true
+        },
+        {
+          name: '🔗 Data Source',
+          value: dataSource === 'ReforgerMods' ? '**ReforgerMods (Fallback)**' : `**${dataSource}**`,
+          inline: true
         }
       )
       .setColor(0x57F287);
   } else if (state === 'offline') {
     embed
       .setDescription('### 🔴 SERVER OFFLINE')
-      .addFields({
-        name: '📡 Status',
-        value: '**OFFLINE**',
-        inline: true
-      })
+      .addFields(
+        {
+          name: '📡 Status',
+          value: '**OFFLINE**',
+          inline: true
+        },
+        {
+          name: '🔗 Data Source',
+          value: dataSource === 'ReforgerMods' ? '**ReforgerMods (Fallback)**' : `**${dataSource}**`,
+          inline: true
+        }
+      )
       .setColor(0xED4245);
   } else {
     embed
       .setDescription('### 🟠 STATUS DATA UNAVAILABLE')
       .addFields({
-        name: '📡 Data Source',
-        value: '**All status data sources temporarily unavailable**',
+        name: '🔗 Data Source',
+        value: '**Unavailable**',
         inline: true
       })
       .setColor(0xFEE75C);
@@ -1617,10 +1631,12 @@ async function handleDataSourceFailure(error) {
     return;
   }
 
+  currentStatusDataSource = 'Unavailable';
+  currentServerViewUrl = null;
   await setBotPresence('🟠 STATUS DATA UNAVAILABLE', 'idle');
 
   try {
-    await renderStatusPanel({ state: 'unavailable' });
+    await renderStatusPanel({ state: 'unavailable', dataSource: currentStatusDataSource });
   } catch (discordError) {
     console.error('Failed to render data-source-unavailable status:', discordError);
   }
@@ -1647,6 +1663,7 @@ async function updateServerStatus() {
         fallback: () => reforgerModsClient.fetchStatus()
       });
       serverData = result.value;
+      currentStatusDataSource = result.source;
       if (result.source === 'ArmaHQ') {
         currentServerViewUrl = SERVER_URL;
       } else {
@@ -1693,7 +1710,7 @@ async function updateServerStatus() {
       await setBotPresence('🔴 SERVER OFFLINE', 'idle');
 
       try {
-        await renderStatusPanel({ state: 'offline' });
+        await renderStatusPanel({ state: 'offline', dataSource: currentStatusDataSource });
       } catch (error) {
         console.error('Discord status panel update failed:', error);
       }
@@ -1725,7 +1742,8 @@ async function updateServerStatus() {
         players,
         maxPlayers,
         queue,
-        activeMods: previousModSnapshot?.size ?? null
+        activeMods: previousModSnapshot?.size ?? null,
+        dataSource: currentStatusDataSource
       });
     } catch (error) {
       console.error('Discord status panel update failed:', error);
