@@ -964,6 +964,7 @@ const client = new Client({
 const SERVER_URL =
   'https://www.armahq.com/servers/1d8007f8-bc4d-45a6-86db-f1091aed4300';
 const SERVER_NAME = 'EU | TLC | THE LAST COALITION | UHC | PVP | PERSISTENT RANK | DRONES';
+const BATTLEMETRICS_SERVER_URL = 'https://www.battlemetrics.com/servers/reforger/40653024';
 const reforgerModsClient = createReforgerModsClient({
   fetchImpl: fetch,
   serverName: SERVER_NAME
@@ -1003,6 +1004,8 @@ const QUEUE_ALERT_TITLES = new Set([
 ]);
 
 let previousModSnapshot = null;
+let currentServerViewUrl = SERVER_URL;
+let currentStatusDataSource = 'Unavailable';
 let pendingRemovedMods = new Map();
 let massRemovalCandidate = null;
 const pendingModAlerts = new Map();
@@ -1299,12 +1302,23 @@ async function getStatusMessage() {
 }
 
 function createButton() {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setLabel('View Server')
-      .setEmoji('🎮')
+  const serverButton = new ButtonBuilder()
+    .setLabel('View Server')
+    .setEmoji('🎮');
+
+  if (currentServerViewUrl) {
+    serverButton
       .setStyle(ButtonStyle.Link)
-      .setURL(SERVER_URL),
+      .setURL(currentServerViewUrl);
+  } else {
+    serverButton
+      .setCustomId('server_link_unavailable')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true);
+  }
+
+  return new ActionRowBuilder().addComponents(
+    serverButton,
     new ButtonBuilder()
       .setCustomId('show_mods')
       .setLabel('Show Mods')
@@ -1422,7 +1436,8 @@ async function renderStatusPanel({
   players = null,
   maxPlayers = null,
   queue = 0,
-  activeMods = null
+  activeMods = null,
+  dataSource = 'Unavailable'
 }) {
   const channel = await getChannel();
   const guildIcon = channel.guild?.iconURL({ extension: 'png', size: 256 });
@@ -1454,24 +1469,36 @@ async function renderStatusPanel({
           name: '📦 Active Mods',
           value: activeMods === null ? '**Updating…**' : `**${activeMods}**`,
           inline: true
+        },
+        {
+          name: '🔗 Data Source',
+          value: dataSource === 'ReforgerMods' ? '**ReforgerMods (Fallback)**' : `**${dataSource}**`,
+          inline: true
         }
       )
       .setColor(0x57F287);
   } else if (state === 'offline') {
     embed
       .setDescription('### 🔴 SERVER OFFLINE')
-      .addFields({
-        name: '📡 Status',
-        value: '**OFFLINE**',
-        inline: true
-      })
+      .addFields(
+        {
+          name: '📡 Status',
+          value: '**OFFLINE**',
+          inline: true
+        },
+        {
+          name: '🔗 Data Source',
+          value: dataSource === 'ReforgerMods' ? '**ReforgerMods (Fallback)**' : `**${dataSource}**`,
+          inline: true
+        }
+      )
       .setColor(0xED4245);
   } else {
     embed
       .setDescription('### 🟠 STATUS DATA UNAVAILABLE')
       .addFields({
-        name: '📡 Data Source',
-        value: '**All status data sources temporarily unavailable**',
+        name: '🔗 Data Source',
+        value: '**Unavailable**',
         inline: true
       })
       .setColor(0xFEE75C);
@@ -1604,10 +1631,12 @@ async function handleDataSourceFailure(error) {
     return;
   }
 
+  currentStatusDataSource = 'Unavailable';
+  currentServerViewUrl = null;
   await setBotPresence('🟠 STATUS DATA UNAVAILABLE', 'idle');
 
   try {
-    await renderStatusPanel({ state: 'unavailable' });
+    await renderStatusPanel({ state: 'unavailable', dataSource: currentStatusDataSource });
   } catch (discordError) {
     console.error('Failed to render data-source-unavailable status:', discordError);
   }
@@ -1634,7 +1663,20 @@ async function updateServerStatus() {
         fallback: () => reforgerModsClient.fetchStatus()
       });
       serverData = result.value;
-      if (result.source === 'ReforgerMods') {
+      currentStatusDataSource = result.source;
+      if (result.source === 'ArmaHQ') {
+        currentServerViewUrl = SERVER_URL;
+      } else {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        try {
+          const response = await fetch(BATTLEMETRICS_SERVER_URL, { signal: controller.signal });
+          currentServerViewUrl = response.status < 500 ? BATTLEMETRICS_SERVER_URL : null;
+        } catch {
+          currentServerViewUrl = null;
+        } finally {
+          clearTimeout(timeout);
+        }
         console.warn('Primary data source unavailable; using ReforgerMods fallback for status.');
       }
     } catch (error) {
@@ -1668,7 +1710,7 @@ async function updateServerStatus() {
       await setBotPresence('🔴 SERVER OFFLINE', 'idle');
 
       try {
-        await renderStatusPanel({ state: 'offline' });
+        await renderStatusPanel({ state: 'offline', dataSource: currentStatusDataSource });
       } catch (error) {
         console.error('Discord status panel update failed:', error);
       }
@@ -1700,7 +1742,8 @@ async function updateServerStatus() {
         players,
         maxPlayers,
         queue,
-        activeMods: previousModSnapshot?.size ?? null
+        activeMods: previousModSnapshot?.size ?? null,
+        dataSource: currentStatusDataSource
       });
     } catch (error) {
       console.error('Discord status panel update failed:', error);
@@ -2266,14 +2309,18 @@ async function handleModsButton(interaction) {
 
   let mods;
 
+  const liveSnapshot = previousModSnapshot?.size
+    ? [...previousModSnapshot.values()]
+    : null;
+
   if (isShowMods) {
-    mods = await fetchServerMods();
+    mods = liveSnapshot ?? await fetchServerMods();
     setCachedMods(interaction.user.id, mods);
   } else {
     mods = getCachedMods(interaction.user.id);
 
     if (!mods) {
-      mods = await fetchServerMods();
+      mods = liveSnapshot ?? await fetchServerMods();
       setCachedMods(interaction.user.id, mods);
     }
   }
