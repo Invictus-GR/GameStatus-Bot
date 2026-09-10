@@ -1,0 +1,49 @@
+name: Apply UI failover
+on:
+  push:
+    branches: [ui-speed-fix]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ui-speed-fix
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: corepack enable && pnpm install --frozen-lockfile
+      - name: Patch and validate
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('src/bot.js'); s=p.read_text()
+          def one(a,b,n):
+            global s
+            c=s.count(a)
+            if c!=1: raise SystemExit(f'{n}: expected 1 match, got {c}')
+            s=s.replace(a,b,1)
+          # Track whether the primary source succeeded during the latest status refresh.
+          one("let lastSuccessfulServerData = null;", "let lastSuccessfulServerData = null;\nlet lastStatusSource = 'armahq';", 'status source state')
+          # Capture source from existing withFallback result.
+          one("const { value: data, source } = await withFallback({", "const { value: data, source } = await withFallback({", 'withFallback anchor')
+          one("lastSuccessfulServerData = data;", "lastSuccessfulServerData = data;\n    lastStatusSource = source;", 'remember source')
+          # Dynamic View Server target: primary ArmaHQ, fallback BattleMetrics.
+          one(".setURL(SERVER_URL),", ".setURL(lastStatusSource === 'primary' ? SERVER_URL : 'https://www.battlemetrics.com/servers/reforger/40653024'),", 'dynamic server link')
+          # Use the watcher's already validated snapshot before any network request.
+          old="""  if (isShowMods) {\n    mods = await fetchServerMods();\n    setCachedMods(interaction.user.id, mods);\n  } else {\n    mods = getCachedMods(interaction.user.id);\n\n    if (!mods) {\n      mods = await fetchServerMods();\n      setCachedMods(interaction.user.id, mods);\n    }\n  }"""
+          new="""  const liveSnapshot = previousModSnapshot?.size\n    ? [...previousModSnapshot.values()]\n    : null;\n\n  if (isShowMods) {\n    mods = liveSnapshot ?? await fetchServerMods();\n    setCachedMods(interaction.user.id, mods);\n  } else {\n    mods = getCachedMods(interaction.user.id);\n\n    if (!mods) {\n      mods = liveSnapshot ?? await fetchServerMods();\n      setCachedMods(interaction.user.id, mods);\n    }\n  }"""
+          one(old,new,'mods snapshot fast path')
+          p.write_text(s)
+      - run: node --check src/bot.js
+      - run: pnpm test
+      - name: Commit validated change
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/bot.js
+          git commit -m 'Add dynamic server link and instant mod snapshot'
+          git push origin ui-speed-fix
