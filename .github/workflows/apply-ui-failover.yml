@@ -26,17 +26,26 @@ jobs:
             c=s.count(a)
             if c!=1: raise SystemExit(f'{n}: expected 1 match, got {c}')
             s=s.replace(a,b,1)
-          # Track whether the primary source succeeded during the latest status refresh.
-          one("let lastSuccessfulServerData = null;", "let lastSuccessfulServerData = null;\nlet lastStatusSource = 'armahq';", 'status source state')
-          # Capture source from existing withFallback result.
-          one("const { value: data, source } = await withFallback({", "const { value: data, source } = await withFallback({", 'withFallback anchor')
-          one("lastSuccessfulServerData = data;", "lastSuccessfulServerData = data;\n    lastStatusSource = source;", 'remember source')
-          # Dynamic View Server target: primary ArmaHQ, fallback BattleMetrics.
-          one(".setURL(SERVER_URL),", ".setURL(lastStatusSource === 'primary' ? SERVER_URL : 'https://www.battlemetrics.com/servers/reforger/40653024'),", 'dynamic server link')
-          # Use the watcher's already validated snapshot before any network request.
-          old="""  if (isShowMods) {\n    mods = await fetchServerMods();\n    setCachedMods(interaction.user.id, mods);\n  } else {\n    mods = getCachedMods(interaction.user.id);\n\n    if (!mods) {\n      mods = await fetchServerMods();\n      setCachedMods(interaction.user.id, mods);\n    }\n  }"""
-          new="""  const liveSnapshot = previousModSnapshot?.size\n    ? [...previousModSnapshot.values()]\n    : null;\n\n  if (isShowMods) {\n    mods = liveSnapshot ?? await fetchServerMods();\n    setCachedMods(interaction.user.id, mods);\n  } else {\n    mods = getCachedMods(interaction.user.id);\n\n    if (!mods) {\n      mods = liveSnapshot ?? await fetchServerMods();\n      setCachedMods(interaction.user.id, mods);\n    }\n  }"""
-          one(old,new,'mods snapshot fast path')
+
+          one("const SERVER_NAME = 'EU | TLC | THE LAST COALITION | UHC | PVP | PERSISTENT RANK | DRONES';",
+              "const SERVER_NAME = 'EU | TLC | THE LAST COALITION | UHC | PVP | PERSISTENT RANK | DRONES';\nconst BATTLEMETRICS_SERVER_URL = 'https://www.battlemetrics.com/servers/reforger/40653024';",
+              'battlemetrics constant')
+
+          one("let previousModSnapshot = null;",
+              "let previousModSnapshot = null;\nlet currentServerViewUrl = SERVER_URL;",
+              'server view state')
+
+          old_button="""function createButton() {\n  return new ActionRowBuilder().addComponents(\n    new ButtonBuilder()\n      .setLabel('View Server')\n      .setEmoji('🎮')\n      .setStyle(ButtonStyle.Link)\n      .setURL(SERVER_URL),\n    new ButtonBuilder()\n      .setCustomId('show_mods')\n      .setLabel('Show Mods')\n      .setEmoji('📦')\n      .setStyle(ButtonStyle.Secondary)\n  );\n}"""
+          new_button="""function createButton() {\n  const serverButton = new ButtonBuilder()\n    .setLabel('View Server')\n    .setEmoji('🎮');\n\n  if (currentServerViewUrl) {\n    serverButton\n      .setStyle(ButtonStyle.Link)\n      .setURL(currentServerViewUrl);\n  } else {\n    serverButton\n      .setCustomId('server_link_unavailable')\n      .setStyle(ButtonStyle.Secondary)\n      .setDisabled(true);\n  }\n\n  return new ActionRowBuilder().addComponents(\n    serverButton,\n    new ButtonBuilder()\n      .setCustomId('show_mods')\n      .setLabel('Show Mods')\n      .setEmoji('📦')\n      .setStyle(ButtonStyle.Secondary)\n  );\n}"""
+          one(old_button,new_button,'dynamic server button')
+
+          anchor="""      serverData = result.value;\n      if (result.source === 'ReforgerMods') {\n        console.warn('Primary data source unavailable; using ReforgerMods fallback for status.');\n      }"""
+          repl="""      serverData = result.value;\n      if (result.source === 'ArmaHQ') {\n        currentServerViewUrl = SERVER_URL;\n      } else {\n        const controller = new AbortController();\n        const timeout = setTimeout(() => controller.abort(), 5000);\n        try {\n          const response = await fetch(BATTLEMETRICS_SERVER_URL, { signal: controller.signal });\n          currentServerViewUrl = response.status < 500 ? BATTLEMETRICS_SERVER_URL : null;\n        } catch {\n          currentServerViewUrl = null;\n        } finally {\n          clearTimeout(timeout);\n        }\n        console.warn('Primary data source unavailable; using ReforgerMods fallback for status.');\n      }"""
+          one(anchor,repl,'status source link routing')
+
+          old_mods="""  if (isShowMods) {\n    mods = await fetchServerMods();\n    setCachedMods(interaction.user.id, mods);\n  } else {\n    mods = getCachedMods(interaction.user.id);\n\n    if (!mods) {\n      mods = await fetchServerMods();\n      setCachedMods(interaction.user.id, mods);\n    }\n  }"""
+          new_mods="""  const liveSnapshot = previousModSnapshot?.size\n    ? [...previousModSnapshot.values()]\n    : null;\n\n  if (isShowMods) {\n    mods = liveSnapshot ?? await fetchServerMods();\n    setCachedMods(interaction.user.id, mods);\n  } else {\n    mods = getCachedMods(interaction.user.id);\n\n    if (!mods) {\n      mods = liveSnapshot ?? await fetchServerMods();\n      setCachedMods(interaction.user.id, mods);\n    }\n  }"""
+          one(old_mods,new_mods,'mods snapshot fast path')
           p.write_text(s)
       - run: node --check src/bot.js
       - run: pnpm test
@@ -45,5 +54,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src/bot.js
-          git commit -m 'Add dynamic server link and instant mod snapshot'
+          git commit -m 'Add resilient server link failover and instant mod view'
           git push origin ui-speed-fix
