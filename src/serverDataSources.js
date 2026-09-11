@@ -1,6 +1,7 @@
 const DEFAULT_BASE_URL = 'https://api.reforgermods.net/v2';
 const DEFAULT_BATTLEMETRICS_BASE_URL = 'https://api.battlemetrics.com/servers';
 const DEFAULT_BATTLEMETRICS_SERVER_ID = '40653024';
+const DEFAULT_REFORGERMODS_SERVER_ID = '1d8007f8-bc4d-45a6-86db-f1091aed4300';
 const DEFAULT_TIMEOUT_MS = 10000;
 const DEFAULT_MAX_SNAPSHOT_AGE_SECONDS = 120;
 
@@ -89,7 +90,7 @@ export function normalizeReforgerModsMods(payload) {
 export function createReforgerModsClient({
   fetchImpl,
   serverName,
-  serverAddress = '85.234.84.65:2000',
+  serverId = DEFAULT_REFORGERMODS_SERVER_ID,
   baseUrl = DEFAULT_BASE_URL,
   battleMetricsBaseUrl = DEFAULT_BATTLEMETRICS_BASE_URL,
   battleMetricsServerId = DEFAULT_BATTLEMETRICS_SERVER_ID,
@@ -98,7 +99,7 @@ export function createReforgerModsClient({
 }) {
   if (typeof fetchImpl !== 'function') throw new TypeError('fetchImpl must be a function');
   if (typeof serverName !== 'string' || serverName.trim() === '') throw new TypeError('serverName is required');
-  let cachedServerId = null;
+  let cachedServerId = typeof serverId === 'string' && serverId.trim() ? serverId.trim() : null;
 
   async function requestJson(url, source = 'ReforgerMods') {
     const controller = new AbortController();
@@ -124,22 +125,10 @@ export function createReforgerModsClient({
     const payload = await requestJson(url);
     assertFreshDataset(payload?.dataset, maxSnapshotAgeSeconds);
     const servers = Array.isArray(payload?.data) ? payload.data : [];
-    const normalizeAddress = value => String(value || '').trim().toLowerCase();
-    const targetAddress = normalizeAddress(serverAddress);
-    const byAddress = servers.find(server => {
-      const candidates = [
-        server?.address,
-        server?.endpoint,
-        server?.ipPort,
-        server?.host && server?.port ? `${server.host}:${server.port}` : null,
-        server?.ip && server?.port ? `${server.ip}:${server.port}` : null
-      ];
-      return candidates.some(value => normalizeAddress(value) === targetAddress);
-    });
-    const exact = byAddress ?? servers.find(server => server?.name === serverName);
+    const exact = servers.find(server => server?.name === serverName);
     const id = exact?.id ?? exact?.roomId ?? exact?.room_id;
     if (typeof id !== 'string' || id.length === 0) {
-      throw new DataSourceError('ReforgerMods', `TLC server was not found by address ${serverAddress} or current name`);
+      throw new DataSourceError('ReforgerMods', 'TLC server was not found by current name during recovery discovery');
     }
     cachedServerId = id;
     return id;
