@@ -1,0 +1,77 @@
+name: Update live TLC server name
+
+on:
+  push:
+    paths:
+      - '.github/workflows/update-live-server-name.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Update server name safely
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('src/bot.js')
+          text = path.read_text()
+
+          old_name = "const SERVER_NAME = 'EU | TLC | THE LAST COALITION | UHC | PVP | PERSISTENT RANK | DRONES';"
+          new_name = "const SERVER_NAME = 'EU | TLC | THE LAST COALITION | UHC | PVP | DEADLOCK GAMEMODE';"
+          if text.count(old_name) != 1:
+              raise SystemExit(f'Expected exactly one old SERVER_NAME declaration, found {text.count(old_name)}')
+          text = text.replace(old_name, new_name, 1)
+
+          old_matcher = """function isStatusPanelMessage(message) {
+            if (message.author.id !== client.user.id) return false;
+            if (message.embeds?.[0]?.title !== SERVER_NAME) return false;
+
+            return message.components?.some(row =>
+              row.components?.some(component => component.customId === 'show_mods')
+            );
+          }"""
+          new_matcher = """function isStatusPanelMessage(message) {
+            if (message.author.id !== client.user.id) return false;
+
+            return message.components?.some(row =>
+              row.components?.some(component => component.customId === 'show_mods')
+            );
+          }"""
+          if text.count(old_matcher) != 1:
+              raise SystemExit(f'Expected exactly one status-panel matcher, found {text.count(old_matcher)}')
+          text = text.replace(old_matcher, new_matcher, 1)
+
+          path.write_text(text)
+
+      - name: Validate
+        run: |
+          node --check src/bot.js
+          node --check src/serverDataSources.js
+          pnpm test
+
+      - name: Commit validated change
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/bot.js
+          git commit -m 'Update TLC live server name' || exit 0
+          git push
