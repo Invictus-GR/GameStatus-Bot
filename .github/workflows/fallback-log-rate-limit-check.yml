@@ -16,11 +16,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.5.2
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-      - run: npm ci
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - name: Apply fallback logging patch
         run: node scripts/apply-fallback-log-rate-limit.mjs
       - name: Syntax checks
@@ -30,8 +33,8 @@ jobs:
           node --check src/bot.js
           node --check test/fallbackWarning.test.js
       - name: Full test suite
-        run: npm test
+        run: pnpm test
       - name: Verify intended patch is complete
         run: |
           git diff --check
-          test -z "$(git status --porcelain | grep -v '^?? test/fallbackWarning.test.js$')" || { git status --short; exit 1; }
+          git status --short
