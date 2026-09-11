@@ -8,11 +8,16 @@ on:
       - '.github/workflows/validate-stable-reforgermods-id.yml'
       - 'scripts/apply-stable-reforgermods-id.mjs'
 
+permissions:
+  contents: write
+
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -22,3 +27,10 @@ jobs:
       - run: node scripts/apply-stable-reforgermods-id.mjs
       - run: node --check src/serverDataSources.js
       - run: pnpm test
+      - name: Commit validated change
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/serverDataSources.js test/serverDataSources.test.js
+          git commit -m 'Use stable ReforgerMods server ID' || exit 0
+          git push
