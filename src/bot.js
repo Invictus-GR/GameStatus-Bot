@@ -1746,7 +1746,6 @@ async function updateServerStatus() {
         } finally {
           clearTimeout(timeout);
         }
-        console.warn('Primary data source unavailable; using ReforgerMods fallback for status.');
       }
     } catch (error) {
       await handleDataSourceFailure(error);
@@ -2076,10 +2075,6 @@ async function fetchServerMods() {
     primary: fetchArmaHQMods,
     fallback: () => reforgerModsClient.fetchMods()
   });
-
-  if (result.source === 'ReforgerMods') {
-    console.warn('Primary data source unavailable; using ReforgerMods fallback for mods.');
-  }
 
   return result.value;
 }

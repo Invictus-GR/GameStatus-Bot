@@ -1,3 +1,5 @@
+import { fallbackWarning } from './fallbackWarning.js';
+
 const DEFAULT_BASE_URL = 'https://api.reforgermods.net/v2';
 const DEFAULT_BATTLEMETRICS_BASE_URL = 'https://api.battlemetrics.com/servers';
 const DEFAULT_BATTLEMETRICS_SERVER_ID = '40653024';
@@ -182,8 +184,9 @@ export function createReforgerModsClient({
     try {
       return await fetchBattleMetricsStatus();
     } catch (battleMetricsError) {
-      console.warn(
-        'BattleMetrics status failed; trying ReforgerMods status fallback:',
+      fallbackWarning(
+        'battlemetrics-status',
+        '[WARN] BattleMetrics status unavailable; using ReforgerMods fallback:',
         battleMetricsError?.message || battleMetricsError
       );
       const status = await fetchReforgerModsStatus();
@@ -214,7 +217,11 @@ export async function withFallback({ primary, fallback, operation }) {
   try {
     return { value: await primary(), source: 'ArmaHQ' };
   } catch (primaryError) {
-    console.warn(`ArmaHQ ${operation} failed; trying secondary source:`, primaryError?.message || primaryError);
+    fallbackWarning(
+      `armahq-${operation}`,
+      `[WARN] ArmaHQ ${operation} unavailable; using secondary source:`,
+      primaryError?.message || primaryError
+    );
     try {
       const fallbackValue = await fallback();
       const source = fallbackValue?.__dataSource || 'ReforgerMods';
