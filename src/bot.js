@@ -963,7 +963,7 @@ const client = new Client({
 
 const SERVER_URL =
   'https://www.armahq.com/servers/1d8007f8-bc4d-45a6-86db-f1091aed4300';
-const SERVER_NAME = 'EU | TLC | THE LAST COALITION | UHC | PVP | PERSISTENT RANK | DRONES';
+const SERVER_NAME = 'EU | TLC | THE LAST COALITION | UHC | PVP | DEADLOCK GAMEMODE';
 const BATTLEMETRICS_SERVER_URL = 'https://www.battlemetrics.com/servers/reforger/40653024';
 const reforgerModsClient = createReforgerModsClient({
   fetchImpl: fetch,
@@ -1277,7 +1277,6 @@ async function getChannel() {
 
 function isStatusPanelMessage(message) {
   if (message.author.id !== client.user.id) return false;
-  if (message.embeds?.[0]?.title !== SERVER_NAME) return false;
 
   return message.components?.some(row =>
     row.components?.some(component => component.customId === 'show_mods')
