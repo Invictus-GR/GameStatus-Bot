@@ -73,25 +73,19 @@ test('BattleMetrics is preferred by the secondary status client', async () => {
   assert.match(calls[0], /battlemetrics\.com\/servers\/40653024$/);
 });
 
-test('ReforgerMods is used if BattleMetrics status also fails', async () => {
+test('ReforgerMods is used if BattleMetrics status also fails without name discovery', async () => {
   const calls = [];
   const fetchImpl = async url => {
     calls.push(String(url));
     if (String(url).includes('battlemetrics.com')) {
       return { ok: false, status: 503 };
     }
-    if (String(url).includes('/servers?')) {
-      return { ok: true, json: async () => ({
-        dataset: { warming: false, stale: false, snapshotAgeSeconds: 5 },
-        data: [{ id: 'room-1', name: 'TLC' }]
-      }) };
-    }
     return { ok: true, json: async () => ({
       dataset: { warming: false, stale: false, snapshotAgeSeconds: 5 },
       server: { online: true, players: 10, maxPlayers: 128, queue: 3 }
     }) };
   };
-  const client = createReforgerModsClient({ fetchImpl, serverName: 'TLC' });
+  const client = createReforgerModsClient({ fetchImpl, serverName: 'OLD TLC NAME' });
   const result = await withFallback({
     operation: 'status',
     primary: async () => { throw new Error('ArmaHQ down'); },
@@ -99,9 +93,11 @@ test('ReforgerMods is used if BattleMetrics status also fails', async () => {
   });
   assert.equal(result.source, 'ReforgerMods');
   assert.equal(result.value.queue, 3);
+  assert.equal(calls.filter(url => url.includes('/servers?')).length, 0);
+  assert.ok(calls.some(url => url.endsWith('/servers/1d8007f8-bc4d-45a6-86db-f1091aed4300')));
 });
 
-test('client discovers exact server and caches its id', async () => {
+test('client discovers exact server and caches its id when stable ID recovery is needed', async () => {
   const calls = [];
   const fetchImpl = async url => {
     calls.push(String(url));
@@ -119,29 +115,27 @@ test('client discovers exact server and caches its id', async () => {
       server: { online: true, players: 10, maxPlayers: 128, queue: 0 }
     }) };
   };
-  const client = createReforgerModsClient({ fetchImpl, serverName: 'TLC' });
+  const client = createReforgerModsClient({ fetchImpl, serverName: 'TLC', serverId: null });
   await client.fetchStatus();
   await client.fetchStatus();
   assert.equal(calls.filter(url => url.includes('/servers?')).length, 1);
 });
 
 
-test('client prefers stable server address over changing name', async () => {
+test('stable ReforgerMods ID survives a server rename', async () => {
   const calls = [];
   const fetchImpl = async url => {
     calls.push(String(url));
     if (String(url).includes('battlemetrics.com')) return { ok: false, status: 503 };
-    if (String(url).includes('/servers?')) return { ok: true, json: async () => ({
-      dataset: { warming: false, stale: false, snapshotAgeSeconds: 5 },
-      data: [{ id: 'room-stable', name: 'RENAMED TLC SERVER', address: '85.234.84.65:2000' }]
-    }) };
+    if (String(url).includes('/servers?')) throw new Error('name discovery should not run');
     return { ok: true, json: async () => ({
       dataset: { warming: false, stale: false, snapshotAgeSeconds: 5 },
       server: { online: true, players: 7, maxPlayers: 128, queue: 1 }
     }) };
   };
-  const client = createReforgerModsClient({ fetchImpl, serverName: 'OLD TLC NAME', serverAddress: '85.234.84.65:2000' });
+  const client = createReforgerModsClient({ fetchImpl, serverName: 'OLD TLC NAME' });
   const status = await client.fetchStatus();
   assert.equal(status.players, 7);
-  assert.equal(calls.filter(url => url.includes('/servers?')).length, 1);
+  assert.equal(calls.filter(url => url.includes('/servers?')).length, 0);
+  assert.ok(calls.some(url => url.endsWith('/servers/1d8007f8-bc4d-45a6-86db-f1091aed4300')));
 });
