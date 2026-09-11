@@ -42,7 +42,8 @@ export function normalizeReforgerModsServer(server) {
   if (players === null || maxPlayers === null || maxPlayers === 0 || players > maxPlayers) {
     throw new DataSourceError('ReforgerMods', 'player counts are invalid');
   }
-  return { isOnline, players, maxPlayers, queue };
+  const serverName = typeof server.name === 'string' && server.name.trim() ? server.name.trim() : null;
+  return { isOnline, players, maxPlayers, queue, ...(serverName ? { serverName } : {}) };
 }
 
 export function normalizeBattleMetricsServer(payload) {
@@ -62,11 +63,13 @@ export function normalizeBattleMetricsServer(payload) {
     throw new DataSourceError('BattleMetrics', 'player counts are invalid');
   }
 
+  const serverName = typeof attributes.name === 'string' && attributes.name.trim() ? attributes.name.trim() : null;
   return {
     isOnline,
     players,
     maxPlayers,
     queue: 0,
+    ...(serverName ? { serverName } : {}),
     __dataSource: 'BattleMetrics'
   };
 }
@@ -99,6 +102,7 @@ export function createReforgerModsClient({
 }) {
   if (typeof fetchImpl !== 'function') throw new TypeError('fetchImpl must be a function');
   if (typeof serverName !== 'string' || serverName.trim() === '') throw new TypeError('serverName is required');
+  let currentServerName = serverName.trim();
   let cachedServerId = typeof serverId === 'string' && serverId.trim() ? serverId.trim() : null;
 
   async function requestJson(url, source = 'ReforgerMods') {
@@ -117,24 +121,35 @@ export function createReforgerModsClient({
     }
   }
 
-  async function discoverServerId() {
+  async function discoverServerId(serverNameOverride = currentServerName) {
+    const requestedName = String(serverNameOverride || '').trim();
+    if (!requestedName) throw new DataSourceError('ReforgerMods', 'server name is required for discovery');
     const url = new URL(`${baseUrl}/servers`);
-    url.searchParams.set('search', serverName);
+    url.searchParams.set('search', requestedName);
     url.searchParams.set('includeOffline', 'true');
     url.searchParams.set('perPage', '100');
     const payload = await requestJson(url);
     assertFreshDataset(payload?.dataset, maxSnapshotAgeSeconds);
     const servers = Array.isArray(payload?.data) ? payload.data : [];
-    const exact = servers.find(server => server?.name === serverName);
+    const exact = servers.find(server => server?.name === requestedName);
     const id = exact?.id ?? exact?.roomId ?? exact?.room_id;
     if (typeof id !== 'string' || id.length === 0) {
-      throw new DataSourceError('ReforgerMods', 'TLC server was not found by current name during recovery discovery');
+      throw new DataSourceError('ReforgerMods', `TLC server was not found by observed name: ${requestedName}`);
     }
+    currentServerName = requestedName;
     cachedServerId = id;
     return id;
   }
 
   async function getServerId() { return cachedServerId || discoverServerId(); }
+
+  function setIdentity({ serverName: nextServerName, serverId: nextServerId } = {}) {
+    if (typeof nextServerName === 'string' && nextServerName.trim()) currentServerName = nextServerName.trim();
+    if (typeof nextServerId === 'string' && nextServerId.trim()) cachedServerId = nextServerId.trim();
+    return { serverName: currentServerName, serverId: cachedServerId };
+  }
+
+  function getIdentity() { return { serverName: currentServerName, serverId: cachedServerId }; }
 
   async function getServerPayload({ retryDiscovery = true } = {}) {
     const serverId = await getServerId();
@@ -192,7 +207,7 @@ export function createReforgerModsClient({
     }
   }
 
-  return { fetchStatus, fetchMods, discoverServerId };
+  return { fetchStatus, fetchMods, discoverServerId, setIdentity, getIdentity };
 }
 
 export async function withFallback({ primary, fallback, operation }) {

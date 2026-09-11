@@ -139,3 +139,25 @@ test('stable ReforgerMods ID survives a server rename', async () => {
   assert.equal(calls.filter(url => url.includes('/servers?')).length, 0);
   assert.ok(calls.some(url => url.endsWith('/servers/1d8007f8-bc4d-45a6-86db-f1091aed4300')));
 });
+
+
+test('BattleMetrics exposes observed server name for identity synchronization', () => {
+  const normalized = normalizeBattleMetricsServer({ data: { attributes: { name: 'EU | TLC | NEW NAME', status: 'online', players: 5, maxPlayers: 128 } } });
+  assert.equal(normalized.serverName, 'EU | TLC | NEW NAME');
+});
+
+test('ReforgerMods discovery can proactively switch identity by observed name', async () => {
+  const calls = [];
+  const fetchImpl = async url => { calls.push(String(url)); if (String(url).includes('/servers?')) return { ok: true, json: async () => ({ dataset: { warming: false, stale: false, snapshotAgeSeconds: 5 }, data: [{ id: 'new-room-id', name: 'EU | TLC | NEW NAME' }] }) }; throw new Error('unexpected request'); };
+  const client = createReforgerModsClient({ fetchImpl, serverName: 'EU | TLC | OLD NAME', serverId: 'old-room-id' });
+  const discovered = await client.discoverServerId('EU | TLC | NEW NAME');
+  assert.equal(discovered, 'new-room-id');
+  assert.deepEqual(client.getIdentity(), { serverName: 'EU | TLC | NEW NAME', serverId: 'new-room-id' });
+  assert.equal(calls.filter(url => url.includes('/servers?')).length, 1);
+});
+
+test('persisted identity can be restored into the ReforgerMods client', () => {
+  const client = createReforgerModsClient({ fetchImpl: async () => { throw new Error('network should not be used'); }, serverName: 'DEFAULT NAME' });
+  client.setIdentity({ serverName: 'RESTORED NAME', serverId: 'restored-id' });
+  assert.deepEqual(client.getIdentity(), { serverName: 'RESTORED NAME', serverId: 'restored-id' });
+});
