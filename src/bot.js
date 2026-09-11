@@ -148,6 +148,15 @@ async function initializeDatabase() {
     `);
 
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS server_identity_state (
+        id SMALLINT PRIMARY KEY CHECK (id = 1),
+        server_name TEXT NOT NULL,
+        reforgermods_server_id TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS mod_watcher_state (
         id SMALLINT PRIMARY KEY CHECK (id = 1),
         state JSONB NOT NULL,
@@ -969,6 +978,7 @@ const reforgerModsClient = createReforgerModsClient({
   fetchImpl: fetch,
   serverName: SERVER_NAME
 });
+let currentServerName = SERVER_NAME;
 const CHANNEL_ID = '1543309765243834428';
 const CHANGELOG_CHANNEL_ID = '1535567655442972722';
 const WARNING_LOG_CHANNEL_ID = '1540989189380640858';
@@ -1152,6 +1162,62 @@ async function restoreServerStatusAlertState() {
   }
 }
 
+async function persistServerIdentity(serverName, reforgerModsServerId) {
+  try {
+    await pool.query(`INSERT INTO server_identity_state (id, server_name, reforgermods_server_id, updated_at) VALUES (1, $1, $2, NOW()) ON CONFLICT (id) DO UPDATE SET server_name = EXCLUDED.server_name, reforgermods_server_id = EXCLUDED.reforgermods_server_id, updated_at = NOW();`, [serverName, reforgerModsServerId]);
+    return true;
+  } catch (error) { console.error('❌ Failed to persist server identity:', error); return false; }
+}
+
+async function restoreServerIdentity() {
+  try {
+    const result = await pool.query(`SELECT server_name, reforgermods_server_id FROM server_identity_state WHERE id = 1`);
+    if (result.rows.length === 0) {
+      const identity = reforgerModsClient.getIdentity();
+      await persistServerIdentity(currentServerName, identity.serverId);
+      console.log('Server identity state initialized from configured defaults.');
+      return false;
+    }
+    const row = result.rows[0];
+    currentServerName = row.server_name;
+    reforgerModsClient.setIdentity({ serverName: row.server_name, serverId: row.reforgermods_server_id });
+    console.log(`Restored server identity: ${currentServerName} / ${row.reforgermods_server_id}`);
+    return true;
+  } catch (error) { console.error('❌ Failed to restore server identity:', error); return false; }
+}
+
+async function syncObservedServerIdentity(observedName, source) {
+  const nextName = typeof observedName === 'string' ? observedName.trim() : '';
+  if (!nextName || nextName === currentServerName) return false;
+  try {
+    const serverId = await reforgerModsClient.discoverServerId(nextName);
+    currentServerName = nextName;
+    await persistServerIdentity(nextName, serverId);
+    console.log(`Server identity synchronized from ${source}: ${nextName} / ${serverId}`);
+    return true;
+  } catch (error) {
+    console.warn(`Server rename observed from ${source} but ReforgerMods identity sync failed:`, error?.message || error);
+    return false;
+  }
+}
+
+function decodeBasicHtmlEntities(value) {
+  return String(value || '').replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/&lt;/gi, '<').replace(/&gt;/gi, '>');
+}
+
+function extractArmaHQServerName(html) {
+  const candidates = [];
+  const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i) ?? html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i);
+  if (ogTitle?.[1]) candidates.push(ogTitle[1]);
+  const h1 = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i); if (h1?.[1]) candidates.push(h1[1].replace(/<[^>]+>/g, ' '));
+  const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i); if (title?.[1]) candidates.push(title[1]);
+  for (const candidate of candidates) {
+    const cleaned = decodeBasicHtmlEntities(candidate).replace(/\s+/g, ' ').replace(/\s*[|–—-]\s*ArmaHQ.*$/i, '').trim();
+    if (/\bTLC\b|THE LAST COALITION/i.test(cleaned)) return cleaned;
+  }
+  return null;
+}
+
 async function requestArmaHQPage() {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ARMAHQ_TIMEOUT_MS);
@@ -1196,6 +1262,7 @@ async function fetchArmaHQPage() {
 }
 
 function parseServerPage(html) {
+  const serverName = extractArmaHQServerName(html);
   const text = html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
@@ -1209,7 +1276,8 @@ function parseServerPage(html) {
       isOnline: false,
       players: 0,
       maxPlayers: 128,
-      queue: 0
+      queue: 0,
+      serverName
     };
   }
 
@@ -1224,7 +1292,8 @@ function parseServerPage(html) {
     isOnline: true,
     players: Number(playersMatch[1]),
     maxPlayers: Number(playersMatch[2]),
-    queue: queueMatch ? Number(queueMatch[1]) : 0
+    queue: queueMatch ? Number(queueMatch[1]) : 0,
+    serverName
   };
 }
 const sayCommand = new SlashCommandBuilder()
@@ -1441,7 +1510,7 @@ async function renderStatusPanel({
   const channel = await getChannel();
   const guildIcon = channel.guild?.iconURL({ extension: 'png', size: 256 });
   const embed = new EmbedBuilder()
-    .setTitle(SERVER_NAME)
+    .setTitle(currentServerName)
     .setFooter({ text: FOOTER_TEXT })
     .setTimestamp();
 
@@ -1663,6 +1732,7 @@ async function updateServerStatus() {
       });
       serverData = result.value;
       currentStatusDataSource = result.source;
+      if (serverData?.serverName) await syncObservedServerIdentity(serverData.serverName, result.source);
       if (result.source === 'ArmaHQ') {
         currentServerViewUrl = SERVER_URL;
       } else {
@@ -2524,6 +2594,7 @@ client.on('guildMemberRemove', async member => {
 client.once('clientReady', async () => {
   await testDatabaseConnection();
   await initializeDatabase();
+  await restoreServerIdentity();
   await pruneServerMetricSamples();
   await restoreModWatcherState();
   await restoreServerStatusAlertState();
