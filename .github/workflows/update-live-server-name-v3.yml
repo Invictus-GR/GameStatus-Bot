@@ -1,0 +1,62 @@
+name: Update TLC server name validated
+
+on:
+  push:
+    paths:
+      - '.github/server-name-trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Patch safely
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('src/bot.js')
+          s=p.read_text()
+          old="const SERVER_NAME = 'EU | TLC | THE LAST COALITION | UHC | PVP | PERSISTENT RANK | DRONES';"
+          new="const SERVER_NAME = 'EU | TLC | THE LAST COALITION | UHC | PVP | DEADLOCK GAMEMODE';"
+          if s.count(old)!=1: raise SystemExit(f'old SERVER_NAME count={s.count(old)}')
+          s=s.replace(old,new,1)
+          oldm="""function isStatusPanelMessage(message) {
+            if (message.author.id !== client.user.id) return false;
+            if (message.embeds?.[0]?.title !== SERVER_NAME) return false;
+
+            return message.components?.some(row =>
+              row.components?.some(component => component.customId === 'show_mods')
+            );
+          }"""
+          newm="""function isStatusPanelMessage(message) {
+            if (message.author.id !== client.user.id) return false;
+
+            return message.components?.some(row =>
+              row.components?.some(component => component.customId === 'show_mods')
+            );
+          }"""
+          if s.count(oldm)!=1: raise SystemExit(f'status matcher count={s.count(oldm)}')
+          p.write_text(s.replace(oldm,newm,1))
+      - name: Validate
+        run: |
+          node --check src/bot.js
+          node --check src/serverDataSources.js
+          pnpm test
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/bot.js
+          git commit -m 'Update TLC live server name'
+          git push
