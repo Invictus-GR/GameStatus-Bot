@@ -1740,7 +1740,7 @@ async function updateServerStatus() {
         const timeout = setTimeout(() => controller.abort(), 5000);
         try {
           const response = await fetch(BATTLEMETRICS_SERVER_URL, { signal: controller.signal });
-          currentServerViewUrl = response.status < 500 ? BATTLEMETRICS_SERVER_URL : null;
+          currentServerViewUrl = response.ok ? BATTLEMETRICS_SERVER_URL : null;
         } catch {
           currentServerViewUrl = null;
         } finally {
