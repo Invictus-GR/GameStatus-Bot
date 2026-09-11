@@ -124,3 +124,24 @@ test('client discovers exact server and caches its id', async () => {
   await client.fetchStatus();
   assert.equal(calls.filter(url => url.includes('/servers?')).length, 1);
 });
+
+
+test('client prefers stable server address over changing name', async () => {
+  const calls = [];
+  const fetchImpl = async url => {
+    calls.push(String(url));
+    if (String(url).includes('battlemetrics.com')) return { ok: false, status: 503 };
+    if (String(url).includes('/servers?')) return { ok: true, json: async () => ({
+      dataset: { warming: false, stale: false, snapshotAgeSeconds: 5 },
+      data: [{ id: 'room-stable', name: 'RENAMED TLC SERVER', address: '85.234.84.65:2000' }]
+    }) };
+    return { ok: true, json: async () => ({
+      dataset: { warming: false, stale: false, snapshotAgeSeconds: 5 },
+      server: { online: true, players: 7, maxPlayers: 128, queue: 1 }
+    }) };
+  };
+  const client = createReforgerModsClient({ fetchImpl, serverName: 'OLD TLC NAME', serverAddress: '85.234.84.65:2000' });
+  const status = await client.fetchStatus();
+  assert.equal(status.players, 7);
+  assert.equal(calls.filter(url => url.includes('/servers?')).length, 1);
+});

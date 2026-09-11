@@ -89,6 +89,7 @@ export function normalizeReforgerModsMods(payload) {
 export function createReforgerModsClient({
   fetchImpl,
   serverName,
+  serverAddress = '85.234.84.65:2000',
   baseUrl = DEFAULT_BASE_URL,
   battleMetricsBaseUrl = DEFAULT_BATTLEMETRICS_BASE_URL,
   battleMetricsServerId = DEFAULT_BATTLEMETRICS_SERVER_ID,
@@ -123,9 +124,23 @@ export function createReforgerModsClient({
     const payload = await requestJson(url);
     assertFreshDataset(payload?.dataset, maxSnapshotAgeSeconds);
     const servers = Array.isArray(payload?.data) ? payload.data : [];
-    const exact = servers.find(server => server?.name === serverName);
+    const normalizeAddress = value => String(value || '').trim().toLowerCase();
+    const targetAddress = normalizeAddress(serverAddress);
+    const byAddress = servers.find(server => {
+      const candidates = [
+        server?.address,
+        server?.endpoint,
+        server?.ipPort,
+        server?.host && server?.port ? `${server.host}:${server.port}` : null,
+        server?.ip && server?.port ? `${server.ip}:${server.port}` : null
+      ];
+      return candidates.some(value => normalizeAddress(value) === targetAddress);
+    });
+    const exact = byAddress ?? servers.find(server => server?.name === serverName);
     const id = exact?.id ?? exact?.roomId ?? exact?.room_id;
-    if (typeof id !== 'string' || id.length === 0) throw new DataSourceError('ReforgerMods', 'TLC server was not found by exact name');
+    if (typeof id !== 'string' || id.length === 0) {
+      throw new DataSourceError('ReforgerMods', `TLC server was not found by address ${serverAddress} or current name`);
+    }
     cachedServerId = id;
     return id;
   }
