@@ -1,4 +1,6 @@
 const DEFAULT_BASE_URL = 'https://api.reforgermods.net/v2';
+const DEFAULT_BATTLEMETRICS_BASE_URL = 'https://api.battlemetrics.com/servers';
+const DEFAULT_BATTLEMETRICS_SERVER_ID = '40653024';
 const DEFAULT_TIMEOUT_MS = 10000;
 const DEFAULT_MAX_SNAPSHOT_AGE_SECONDS = 120;
 
@@ -42,6 +44,32 @@ export function normalizeReforgerModsServer(server) {
   return { isOnline, players, maxPlayers, queue };
 }
 
+export function normalizeBattleMetricsServer(payload) {
+  const attributes = payload?.data?.attributes;
+  if (!attributes || typeof attributes !== 'object') {
+    throw new DataSourceError('BattleMetrics', 'server attributes are missing');
+  }
+
+  const status = String(attributes.status || '').toLowerCase();
+  if (!status) throw new DataSourceError('BattleMetrics', 'server status is missing');
+
+  const isOnline = status === 'online';
+  const maxPlayers = asFiniteInteger(attributes.maxPlayers, 128);
+  const players = isOnline ? asFiniteInteger(attributes.players, null) : 0;
+
+  if (maxPlayers === null || maxPlayers === 0 || players === null || players > maxPlayers) {
+    throw new DataSourceError('BattleMetrics', 'player counts are invalid');
+  }
+
+  return {
+    isOnline,
+    players,
+    maxPlayers,
+    queue: 0,
+    __dataSource: 'BattleMetrics'
+  };
+}
+
 function normalizeMod(raw) {
   const modId = raw?.modId ?? raw?.id ?? raw?.workshopId ?? raw?.workshop?.id;
   const name = raw?.name ?? raw?.modName ?? raw?.workshop?.name;
@@ -58,22 +86,30 @@ export function normalizeReforgerModsMods(payload) {
     .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
 }
 
-export function createReforgerModsClient({ fetchImpl, serverName, baseUrl = DEFAULT_BASE_URL, timeoutMs = DEFAULT_TIMEOUT_MS, maxSnapshotAgeSeconds = DEFAULT_MAX_SNAPSHOT_AGE_SECONDS }) {
+export function createReforgerModsClient({
+  fetchImpl,
+  serverName,
+  baseUrl = DEFAULT_BASE_URL,
+  battleMetricsBaseUrl = DEFAULT_BATTLEMETRICS_BASE_URL,
+  battleMetricsServerId = DEFAULT_BATTLEMETRICS_SERVER_ID,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  maxSnapshotAgeSeconds = DEFAULT_MAX_SNAPSHOT_AGE_SECONDS
+}) {
   if (typeof fetchImpl !== 'function') throw new TypeError('fetchImpl must be a function');
   if (typeof serverName !== 'string' || serverName.trim() === '') throw new TypeError('serverName is required');
   let cachedServerId = null;
 
-  async function requestJson(url) {
+  async function requestJson(url, source = 'ReforgerMods') {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetchImpl(url, { headers: { 'User-Agent': 'TLC-Command/1.0', 'X-API-Client': 'TLC-Command/1.0' }, signal: controller.signal });
-      if (!response.ok) throw new DataSourceError('ReforgerMods', `HTTP ${response.status}`);
+      if (!response.ok) throw new DataSourceError(source, `HTTP ${response.status}`);
       return await response.json();
     } catch (error) {
       if (error instanceof DataSourceError) throw error;
-      if (error?.name === 'AbortError') throw new DataSourceError('ReforgerMods', `request timed out after ${timeoutMs}ms`, error);
-      throw new DataSourceError('ReforgerMods', error?.message || 'request failed', error);
+      if (error?.name === 'AbortError') throw new DataSourceError(source, `request timed out after ${timeoutMs}ms`, error);
+      throw new DataSourceError(source, error?.message || 'request failed', error);
     } finally {
       clearTimeout(timeout);
     }
@@ -110,9 +146,30 @@ export function createReforgerModsClient({ fetchImpl, serverName, baseUrl = DEFA
     }
   }
 
-  async function fetchStatus() {
+  async function fetchReforgerModsStatus() {
     const payload = await getServerPayload();
     return normalizeReforgerModsServer(payload?.server ?? payload?.data);
+  }
+
+  async function fetchBattleMetricsStatus() {
+    const payload = await requestJson(
+      `${battleMetricsBaseUrl}/${encodeURIComponent(battleMetricsServerId)}`,
+      'BattleMetrics'
+    );
+    return normalizeBattleMetricsServer(payload);
+  }
+
+  async function fetchStatus() {
+    try {
+      return await fetchBattleMetricsStatus();
+    } catch (battleMetricsError) {
+      console.warn(
+        'BattleMetrics status failed; trying ReforgerMods status fallback:',
+        battleMetricsError?.message || battleMetricsError
+      );
+      const status = await fetchReforgerModsStatus();
+      return { ...status, __dataSource: 'ReforgerMods' };
+    }
   }
 
   async function fetchMods({ retryDiscovery = true } = {}) {
@@ -138,9 +195,18 @@ export async function withFallback({ primary, fallback, operation }) {
   try {
     return { value: await primary(), source: 'ArmaHQ' };
   } catch (primaryError) {
-    console.warn(`ArmaHQ ${operation} failed; trying ReforgerMods:`, primaryError?.message || primaryError);
+    console.warn(`ArmaHQ ${operation} failed; trying secondary source:`, primaryError?.message || primaryError);
     try {
-      return { value: await fallback(), source: 'ReforgerMods', primaryError };
+      const fallbackValue = await fallback();
+      const source = fallbackValue?.__dataSource || 'ReforgerMods';
+      let value = fallbackValue;
+
+      if (fallbackValue && typeof fallbackValue === 'object' && '__dataSource' in fallbackValue) {
+        const { __dataSource, ...cleanValue } = fallbackValue;
+        value = cleanValue;
+      }
+
+      return { value, source, primaryError };
     } catch (fallbackError) {
       throw new AggregateError([primaryError, fallbackError], `Both server data sources failed during ${operation}`);
     }
