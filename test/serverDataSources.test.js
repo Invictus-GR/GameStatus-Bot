@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   assertFreshDataset,
   createReforgerModsClient,
+  normalizeBattleMetricsServer,
   normalizeReforgerModsMods,
   normalizeReforgerModsServer,
   withFallback
@@ -20,6 +21,17 @@ test('server normalization validates counts', () => {
     isOnline: true, players: 128, maxPlayers: 128, queue: 7
   });
   assert.throws(() => normalizeReforgerModsServer({ online: true, players: 129, maxPlayers: 128, queue: 0 }));
+});
+
+test('BattleMetrics normalization validates status and counts', () => {
+  assert.deepEqual(normalizeBattleMetricsServer({ data: { attributes: {
+    status: 'online', players: 64, maxPlayers: 128
+  } } }), {
+    isOnline: true, players: 64, maxPlayers: 128, queue: 0, __dataSource: 'BattleMetrics'
+  });
+  assert.throws(() => normalizeBattleMetricsServer({ data: { attributes: {
+    status: 'online', players: 129, maxPlayers: 128
+  } } }));
 });
 
 test('mod normalization deduplicates by mod id', () => {
@@ -41,10 +53,61 @@ test('fallback is used only when primary throws', async () => {
   assert.equal(result.value.isOnline, true);
 });
 
+test('BattleMetrics is preferred by the secondary status client', async () => {
+  const calls = [];
+  const fetchImpl = async url => {
+    calls.push(String(url));
+    return { ok: true, json: async () => ({ data: { attributes: {
+      status: 'online', players: 91, maxPlayers: 128
+    } } }) };
+  };
+  const client = createReforgerModsClient({ fetchImpl, serverName: 'TLC' });
+  const result = await withFallback({
+    operation: 'status',
+    primary: async () => { throw new Error('ArmaHQ down'); },
+    fallback: () => client.fetchStatus()
+  });
+  assert.equal(result.source, 'BattleMetrics');
+  assert.equal(result.value.players, 91);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /battlemetrics\.com\/servers\/40653024$/);
+});
+
+test('ReforgerMods is used if BattleMetrics status also fails', async () => {
+  const calls = [];
+  const fetchImpl = async url => {
+    calls.push(String(url));
+    if (String(url).includes('battlemetrics.com')) {
+      return { ok: false, status: 503 };
+    }
+    if (String(url).includes('/servers?')) {
+      return { ok: true, json: async () => ({
+        dataset: { warming: false, stale: false, snapshotAgeSeconds: 5 },
+        data: [{ id: 'room-1', name: 'TLC' }]
+      }) };
+    }
+    return { ok: true, json: async () => ({
+      dataset: { warming: false, stale: false, snapshotAgeSeconds: 5 },
+      server: { online: true, players: 10, maxPlayers: 128, queue: 3 }
+    }) };
+  };
+  const client = createReforgerModsClient({ fetchImpl, serverName: 'TLC' });
+  const result = await withFallback({
+    operation: 'status',
+    primary: async () => { throw new Error('ArmaHQ down'); },
+    fallback: () => client.fetchStatus()
+  });
+  assert.equal(result.source, 'ReforgerMods');
+  assert.equal(result.value.queue, 3);
+});
+
 test('client discovers exact server and caches its id', async () => {
   const calls = [];
   const fetchImpl = async url => {
     calls.push(String(url));
+    if (String(url).includes('battlemetrics.com')) {
+      return { ok: false, status: 503 };
+    }
     if (String(url).includes('/servers?')) {
       return { ok: true, json: async () => ({
         dataset: { warming: false, stale: false, snapshotAgeSeconds: 5 },
