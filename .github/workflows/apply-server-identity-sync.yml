@@ -19,8 +19,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-      - run: npm ci
+      - run: npm install --no-package-lock
       - run: node scripts/apply-server-identity-sync.mjs
       - run: node --check src/serverDataSources.js
       - run: node --check src/bot.js
