@@ -1,0 +1,37 @@
+name: Fallback log rate-limit check
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/fallbackWarning.js'
+      - 'src/serverDataSources.js'
+      - 'src/bot.js'
+      - 'test/fallbackWarning.test.js'
+      - 'scripts/apply-fallback-log-rate-limit.mjs'
+      - '.github/workflows/fallback-log-rate-limit-check.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Apply fallback logging patch
+        run: node scripts/apply-fallback-log-rate-limit.mjs
+      - name: Syntax checks
+        run: |
+          node --check src/fallbackWarning.js
+          node --check src/serverDataSources.js
+          node --check src/bot.js
+          node --check test/fallbackWarning.test.js
+      - name: Full test suite
+        run: npm test
+      - name: Verify intended patch is complete
+        run: |
+          git diff --check
+          test -z "$(git status --porcelain | grep -v '^?? test/fallbackWarning.test.js$')" || { git status --short; exit 1; }
