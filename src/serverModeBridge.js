@@ -13,7 +13,7 @@ const { Pool } = pg;
 
 const STATUS_CHANNEL_ID = '1543309765243834428';
 const SERVER_NAME =
-  'EU | TLC | THE LAST COALITION | UHC | PVP | PERSISTENT RANK | DRONES';
+  'EU | TLC | THE LAST COALITION | UHC | PVP | DEADLOCK GAMEMODE';
 const FOOTER_TEXT =
   'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC';
 const OWNER_ID = process.env.FAILSAFE_OWNER_ID;
@@ -73,13 +73,33 @@ function getEmbedTitle(embed) {
 
 async function restoreBridgeState() {
   try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ${STATE_TABLE} (
+        id SMALLINT PRIMARY KEY CHECK (id = 1),
+        mode TEXT NOT NULL CHECK (
+          mode IN ('live', 'maintenance', 'testing', 'final-checks', 'ready')
+        ),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
     const result = await pool.query(`
       SELECT mode, updated_at
       FROM ${STATE_TABLE}
       WHERE id = 1;
     `);
 
-    if (result.rows.length === 0) return;
+    if (result.rows.length === 0) {
+      const inserted = await pool.query(`
+        INSERT INTO ${STATE_TABLE} (id, mode, updated_at)
+        VALUES (1, 'live', NOW())
+        RETURNING mode, updated_at;
+      `);
+      bridgeMode = inserted.rows[0].mode;
+      bridgeUpdatedAt = new Date(inserted.rows[0].updated_at);
+      console.log('✅ [SERVERMODE-BRIDGE] Initialized mode: live.');
+      return;
+    }
 
     bridgeMode = result.rows[0].mode;
     bridgeUpdatedAt = new Date(result.rows[0].updated_at);
