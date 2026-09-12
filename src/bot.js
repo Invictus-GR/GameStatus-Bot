@@ -77,6 +77,7 @@ import {
   createReforgerModsClient,
   withFallback
 } from './serverDataSources.js';
+import { initializeGeneralSupportMessage } from './generalSupportMessage.js';
 
 const { Pool } = pg;
 const pool = new Pool({
@@ -2593,6 +2594,12 @@ client.once('clientReady', async () => {
   await pruneServerMetricSamples();
   await restoreModWatcherState();
   await restoreServerStatusAlertState();
+  await initializeGeneralSupportMessage({
+    client,
+    pool,
+    channelId: GENERAL_CHANNEL_ID,
+    footerText: FOOTER_TEXT
+  });
 
   if (FAILSAFE_OWNER_ID && FAILSAFE_GUILD_ID) {
     console.log('✅ [FAILSAFE] Stone Age protocol armed.');
