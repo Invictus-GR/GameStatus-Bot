@@ -8,8 +8,8 @@
     "node": ">=20.9.0"
   },
   "scripts": {
-    "start": "sed -i \"0,/return hasAnyRole(member, getCurrentHandlerRoleIds(ticket));/s//return hasAnyRole(member, TICKET_CLOSE_OVERRIDE_ROLE_IDS) || hasAnyRole(member, getCurrentHandlerRoleIds(ticket));/\" src/ticketSystem.js && sed -i \"0,/const client = new Client(/s//export const client = new Client(/\" src/bot.js && node src/start.js",
-    "dev": "sed -i \"0,/const client = new Client(/s//export const client = new Client(/\" src/bot.js && nodemon src/start.js",
+    "start": "node src/start.js",
+    "dev": "nodemon src/start.js",
     "test": "node --test"
   },
   "repository": {
