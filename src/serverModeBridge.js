@@ -5,6 +5,7 @@ import {
   Message,
   MessageFlags,
   Routes,
+  SlashCommandBuilder,
   TextChannel
 } from 'discord.js';
 import pg from 'pg';
@@ -18,6 +19,25 @@ const FOOTER_TEXT =
   'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC';
 const OWNER_ID = process.env.FAILSAFE_OWNER_ID;
 const STATE_TABLE = 'server_mode_state';
+
+export const serverModeCommand = new SlashCommandBuilder()
+  .setName('servermode')
+  .setDescription('Control the TLC public server status mode')
+  .addSubcommand(subcommand =>
+    subcommand.setName('maintenance').setDescription('Set the server status to Maintenance')
+  )
+  .addSubcommand(subcommand =>
+    subcommand.setName('testing').setDescription('Set the server status to Testing')
+  )
+  .addSubcommand(subcommand =>
+    subcommand.setName('final-checks').setDescription('Set the server status to Final Checks')
+  )
+  .addSubcommand(subcommand =>
+    subcommand.setName('ready').setDescription('Set the server status to Ready')
+  )
+  .addSubcommand(subcommand =>
+    subcommand.setName('live').setDescription('Return the status panel to live monitoring')
+  );
 
 const MODE_CONFIG = Object.freeze({
   maintenance: {
