@@ -480,81 +480,136 @@ async function createTicketFromSelection({ interaction, client, pool, footerText
   }
 
   const ticketNumber = await allocateTicketNumber(pool);
-  const channel = await guild.channels.create({
-    name: `ticket-${ticketNumber}`,
-    type: ChannelType.GuildText,
-    parent: TICKET_CONFIG.ticketsCategoryId,
-    reason: `TLC ticket #${ticketNumber} opened by ${interaction.user.tag}`
-  });
+  let channel = null;
+  let db = null;
+  let transactionOpen = false;
 
   try {
-    await channel.lockPermissions();
+    channel = await guild.channels.create({
+      name: `ticket-${ticketNumber}`,
+      type: ChannelType.GuildText,
+      parent: TICKET_CONFIG.ticketsCategoryId,
+      reason: `TLC ticket #${ticketNumber} opened by ${interaction.user.tag}`
+    });
+
+    try {
+      await channel.lockPermissions();
+    } catch (error) {
+      console.warn(
+        `[TICKETS] Could not sync permissions for ticket-${ticketNumber}:`,
+        error?.message ?? error
+      );
+    }
+
+    await channel.permissionOverwrites.edit(guild.roles.everyone.id, {
+      ViewChannel: false
+    });
+    await grantTicketAccess(channel, interaction.user.id);
+
+    const accessRoleIds = [...new Set([
+      ...type.initialRoleIds,
+      ...(type.openingPingRoleIds ?? [])
+    ].filter(Boolean))];
+    const accessUserIds = [...new Set(
+      (type.openingPingUserIds ?? []).filter(Boolean)
+    )];
+
+    for (const roleId of accessRoleIds) {
+      await grantTicketAccess(channel, roleId);
+    }
+    for (const userId of accessUserIds) {
+      await grantTicketAccess(channel, userId);
+    }
+
+    db = await pool.connect();
+    await db.query('BEGIN');
+    transactionOpen = true;
+
+    const insertResult = await db.query(`
+      INSERT INTO tlc_tickets (
+        ticket_number,
+        channel_id,
+        ticket_type,
+        opener_id,
+        status,
+        escalation_index
+      )
+      VALUES ($1, $2, $3, $4, 'open', 0)
+      RETURNING *;
+    `, [ticketNumber, channel.id, ticketTypeKey, interaction.user.id]);
+
+    let ticket = insertResult.rows[0];
+    if (!ticket) {
+      throw new Error(`Ticket #${ticketNumber} insert returned no row.`);
+    }
+
+    await recordTicketEvent(db, ticketNumber, 'opened', interaction.user.id, {
+      ticketType: ticketTypeKey,
+      channelId: channel.id,
+      initialRoleIds: type.initialRoleIds,
+      openingPingRoleIds: type.openingPingRoleIds ?? [],
+      openingPingUserIds: type.openingPingUserIds ?? []
+    });
+
+    const ping = buildInitialPing(ticket);
+    const panelMessage = await channel.send({
+      ...ping,
+      embeds: [buildTicketEmbed(ticket, footerText)],
+      components: [buildTicketButtons(ticket)]
+    });
+
+    const updatedResult = await db.query(`
+      UPDATE tlc_tickets
+      SET panel_message_id = $2
+      WHERE ticket_number = $1
+      RETURNING *;
+    `, [ticketNumber, panelMessage.id]);
+
+    ticket = updatedResult.rows[0];
+    if (!ticket) {
+      throw new Error(`Ticket #${ticketNumber} panel update returned no row.`);
+    }
+
+    await db.query('COMMIT');
+    transactionOpen = false;
+
+    await interaction.editReply({
+      content: `✅ Your ticket has been created: ${channel}`
+    });
+
+    console.log(
+      `[TICKETS] Opened ticket-${ticketNumber} (${type.label}) for ${interaction.user.tag}.`
+    );
   } catch (error) {
-    console.warn(`[TICKETS] Could not sync permissions for ticket-${ticketNumber}:`, error?.message ?? error);
+    if (db && transactionOpen) {
+      await db.query('ROLLBACK').catch(rollbackError => {
+        console.error(
+          `[TICKETS] Failed to roll back ticket-${ticketNumber} database transaction:`,
+          rollbackError
+        );
+      });
+      transactionOpen = false;
+    }
+
+    if (channel) {
+      await channel.delete(
+        `Rolling back failed TLC ticket #${ticketNumber} creation`
+      ).catch(deleteError => {
+        console.error(
+          `[TICKETS] Failed to remove orphaned ticket-${ticketNumber}:`,
+          deleteError
+        );
+      });
+    }
+
+    console.error(
+      `[TICKETS] Ticket-${ticketNumber} creation failed and was rolled back:`,
+      error
+    );
+    throw error;
+  } finally {
+    if (db) db.release();
   }
-
-  await channel.permissionOverwrites.edit(guild.roles.everyone.id, {
-    ViewChannel: false
-  });
-  await grantTicketAccess(channel, interaction.user.id);
-
-  const accessRoleIds = [...new Set([
-    ...type.initialRoleIds,
-    ...(type.openingPingRoleIds ?? [])
-  ].filter(Boolean))];
-  const accessUserIds = [...new Set(
-    (type.openingPingUserIds ?? []).filter(Boolean)
-  )];
-
-  for (const roleId of accessRoleIds) {
-    await grantTicketAccess(channel, roleId);
-  }
-  for (const userId of accessUserIds) {
-    await grantTicketAccess(channel, userId);
-  }
-
-  const insertResult = await pool.query(`
-    INSERT INTO tlc_tickets (
-      ticket_number,
-      channel_id,
-      ticket_type,
-      opener_id,
-      status,
-      escalation_index
-    )
-    VALUES ($1, $2, $3, $4, 'open', 0)
-    RETURNING *;
-  `, [ticketNumber, channel.id, ticketTypeKey, interaction.user.id]);
-
-  let ticket = insertResult.rows[0];
-  await recordTicketEvent(pool, ticketNumber, 'opened', interaction.user.id, {
-    ticketType: ticketTypeKey,
-    channelId: channel.id,
-    initialRoleIds: type.initialRoleIds,
-    openingPingRoleIds: type.openingPingRoleIds ?? [],
-    openingPingUserIds: type.openingPingUserIds ?? []
-  });
-
-  const ping = buildInitialPing(ticket);
-  const panelMessage = await channel.send({
-    ...ping,
-    embeds: [buildTicketEmbed(ticket, footerText)],
-    components: [buildTicketButtons(ticket)]
-  });
-
-  const updatedResult = await pool.query(`
-    UPDATE tlc_tickets
-    SET panel_message_id = $2
-    WHERE ticket_number = $1
-    RETURNING *;
-  `, [ticketNumber, panelMessage.id]);
-  ticket = updatedResult.rows[0];
-
-  await interaction.editReply({
-    content: `✅ Your ticket has been created: ${channel}`
-  });
-
-  console.log(`[TICKETS] Opened ticket-${ticketNumber} (${type.label}) for ${interaction.user.tag}.`);
 }
 
 function parseTicketButton(customId) {
