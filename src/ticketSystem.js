@@ -204,16 +204,23 @@ function buildTicketEmbed(ticket, footerText) {
 
 function buildInitialPing(ticket) {
   const type = getTicketType(ticket.ticket_type);
-  const roleIds = type?.initialRoleIds ?? [];
+  const roleIds = [...new Set([
+    ...(type?.initialRoleIds ?? []),
+    ...(type?.openingPingRoleIds ?? [])
+  ].filter(Boolean))];
+  const userIds = [...new Set([
+    ticket.opener_id,
+    ...(type?.openingPingUserIds ?? [])
+  ].filter(Boolean))];
 
   return {
     content: [
       ...roleIds.map(roleMention),
-      userMention(ticket.opener_id)
+      ...userIds.map(userMention)
     ].join(' '),
     allowedMentions: {
       roles: roleIds,
-      users: [ticket.opener_id]
+      users: userIds
     }
   };
 }
@@ -462,8 +469,19 @@ async function createTicketFromSelection({ interaction, client, pool, footerText
   });
   await grantTicketAccess(channel, interaction.user.id);
 
-  for (const roleId of type.initialRoleIds) {
+  const accessRoleIds = [...new Set([
+    ...type.initialRoleIds,
+    ...(type.openingPingRoleIds ?? [])
+  ].filter(Boolean))];
+  const accessUserIds = [...new Set(
+    (type.openingPingUserIds ?? []).filter(Boolean)
+  )];
+
+  for (const roleId of accessRoleIds) {
     await grantTicketAccess(channel, roleId);
+  }
+  for (const userId of accessUserIds) {
+    await grantTicketAccess(channel, userId);
   }
 
   const insertResult = await pool.query(`
@@ -483,7 +501,9 @@ async function createTicketFromSelection({ interaction, client, pool, footerText
   await recordTicketEvent(pool, ticketNumber, 'opened', interaction.user.id, {
     ticketType: ticketTypeKey,
     channelId: channel.id,
-    initialRoleIds: type.initialRoleIds
+    initialRoleIds: type.initialRoleIds,
+    openingPingRoleIds: type.openingPingRoleIds ?? [],
+    openingPingUserIds: type.openingPingUserIds ?? []
   });
 
   const ping = buildInitialPing(ticket);
