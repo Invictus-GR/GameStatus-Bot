@@ -889,11 +889,18 @@ function testEnvironment() {
 function testListeners(context) {
   const interactionCount = context.client.listenerCount('interactionCreate');
   const memberRemoveCount = context.client.listenerCount('guildMemberRemove');
+  const expectedInteractionListeners = 6;
 
   return [
-    interactionCount === 1
-      ? pass('interactionCreate listeners', '1 listener registered.')
-      : warn('interactionCreate listeners', `${interactionCount} listeners registered; expected 1.`),
+    interactionCount === expectedInteractionListeners
+      ? pass(
+          'interactionCreate listeners',
+          `${interactionCount} modular listeners registered as expected.`
+        )
+      : warn(
+          'interactionCreate listeners',
+          `${interactionCount} listeners registered; expected ${expectedInteractionListeners}.`
+        ),
     memberRemoveCount === 1
       ? pass('guildMemberRemove listeners', '1 listener registered.')
       : warn('guildMemberRemove listeners', `${memberRemoveCount} listeners registered; expected 1.`)
