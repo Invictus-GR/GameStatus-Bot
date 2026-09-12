@@ -1755,20 +1755,9 @@ async function updateServerStatus() {
       serverData = result.value;
       currentStatusDataSource = result.source;
       if (serverData?.serverName) await syncObservedServerIdentity(serverData.serverName, result.source);
-      if (result.source === 'ArmaHQ') {
-        currentServerViewUrl = SERVER_URL;
-      } else {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
-        try {
-          const response = await fetch(BATTLEMETRICS_SERVER_URL, { signal: controller.signal });
-          currentServerViewUrl = response.ok ? BATTLEMETRICS_SERVER_URL : null;
-        } catch {
-          currentServerViewUrl = null;
-        } finally {
-          clearTimeout(timeout);
-        }
-      }
+      currentServerViewUrl = result.source === 'ArmaHQ'
+        ? SERVER_URL
+        : BATTLEMETRICS_SERVER_URL;
     } catch (error) {
       await handleDataSourceFailure(error);
       return;
