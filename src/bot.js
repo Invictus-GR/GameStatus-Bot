@@ -64,10 +64,6 @@ import {
   modChangesCommand
 } from './modChangesCommand.js';
 import {
-  testWelcomeCommand,
-  welcomeLogoCommand
-} from './welcomeCommands.js';
-import {
   buildRollingModAlertDescription,
   countRollingModChanges,
   createRollingModEventRows,
@@ -1301,6 +1297,20 @@ function parseServerPage(html) {
     serverName
   };
 }
+const welcomeLogoCommand = new SlashCommandBuilder()
+  .setName('welcomelogo')
+  .setDescription('Set the TLC welcome message logo')
+  .addAttachmentOption(option =>
+    option
+      .setName('image')
+      .setDescription('The logo image to use as the welcome thumbnail')
+      .setRequired(true)
+  );
+
+const testWelcomeCommand = new SlashCommandBuilder()
+  .setName('testwelcome')
+  .setDescription('Send a test TLC welcome message in the welcome channel');
+
 const sayCommand = new SlashCommandBuilder()
   .setName('say')
   .setDescription('Send an embed message as TLC Command')
