@@ -82,6 +82,17 @@ export const TICKET_TYPES = Object.freeze({
       '**Thank you for your interest in becoming a TLC Dedicated Pilot.**',
       'A member of the TLC Team will assist you shortly and explain the next steps of the process.'
     ].join('\n')
+  }),
+
+  drone_operator: Object.freeze({
+    label: 'Drone Operator Application',
+    description: 'Apply to begin the Drone Operator process.',
+    initialRoleIds: [R.discordModerator],
+    escalationLevels: [],
+    instructions: [
+      '**Thank you for your interest in becoming a TLC Drone Operator.**',
+      'A member of the TLC Team will assist you shortly and explain the Drone Operator Program, requirements, and evaluation process.'
+    ].join('\n')
   })
 });
 
