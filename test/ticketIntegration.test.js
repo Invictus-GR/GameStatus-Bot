@@ -56,3 +56,16 @@ test('server mode interactions use an explicit client handler instead of Client.
   assert.match(botSource, /await initializeServerModeBridge\(client\);/);
   assert.doesNotMatch(startSource, /import '\.\/serverModeBridge\.js';/);
 });
+
+
+test('server mode automation guards replace Discord.js message/channel monkey patches', () => {
+  assert.doesNotMatch(serverModeSource, /Message\.prototype\.edit/);
+  assert.doesNotMatch(serverModeSource, /TextChannel\.prototype\.send/);
+  assert.doesNotMatch(serverModeSource, /\.setPresence\s*=\s*async/);
+  assert.match(serverModeSource, /export function isServerModeManual\(\)/);
+  assert.match(botSource, /if \(isServerModeManual\(\)\) return;/);
+  assert.match(
+    botSource,
+    /Server status alert suppressed while manual server mode is active/
+  );
+});

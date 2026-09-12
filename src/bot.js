@@ -91,6 +91,7 @@ import {
 } from './blacklistBridge.js';
 import {
   initializeServerModeBridge,
+  isServerModeManual,
   serverModeCommand
 } from './serverModeBridge.js';
 
@@ -1525,6 +1526,8 @@ async function checkQueueAlerts(queue, players, maxPlayers) {
 }
 
 async function setBotPresence(name, status) {
+  if (isServerModeManual()) return;
+
   try {
     await client.user.setPresence({
       activities: [{ name, type: ActivityType.Custom }],
@@ -1543,6 +1546,8 @@ async function renderStatusPanel({
   activeMods = null,
   dataSource = 'Unavailable'
 }) {
+  if (isServerModeManual()) return;
+
   const channel = await getChannel();
   const guildIcon = channel.guild?.iconURL({ extension: 'png', size: 256 });
   const embed = new EmbedBuilder()
@@ -1680,6 +1685,13 @@ function createServerStatusAlertEmbed(alert) {
 }
 
 async function sendServerStatusAlert(alert) {
+  if (isServerModeManual()) {
+    console.log(
+      `Server status alert suppressed while manual server mode is active: ${alert.type}.`
+    );
+    return null;
+  }
+
   const embed = createServerStatusAlertEmbed(alert);
 
   await withRetry(

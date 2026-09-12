@@ -1,11 +1,9 @@
 import {
   ActivityType,
   EmbedBuilder,
-  Message,
   MessageFlags,
   Routes,
   SlashCommandBuilder,
-  TextChannel
 } from 'discord.js';
 import { pool } from './db.js';
 
@@ -67,11 +65,6 @@ const MODE_CONFIG = Object.freeze({
   }
 });
 
-const SERVER_ALERT_TITLES = new Set([
-  '🔴 TLC SERVER DOWN',
-  '🟢 TLC SERVER ONLINE AGAIN'
-]);
-
 let bridgeMode = 'live';
 let bridgeUpdatedAt = new Date();
 let nativePresenceSetter = null;
@@ -80,8 +73,8 @@ function isManualMode() {
   return Object.hasOwn(MODE_CONFIG, bridgeMode);
 }
 
-function getEmbedTitle(embed) {
-  return embed?.data?.title ?? embed?.title ?? null;
+export function isServerModeManual() {
+  return isManualMode();
 }
 
 async function restoreBridgeState() {
@@ -135,37 +128,6 @@ async function persistMode(mode) {
   bridgeMode = result.rows[0].mode;
   bridgeUpdatedAt = new Date(result.rows[0].updated_at);
 }
-
-const previousMessageEdit = Message.prototype.edit;
-Message.prototype.edit = async function bridgeProtectedEdit(payload) {
-  const title = getEmbedTitle(payload?.embeds?.[0]);
-
-  if (
-    isManualMode() &&
-    this.channelId === STATUS_CHANNEL_ID &&
-    title === SERVER_NAME
-  ) {
-    return this;
-  }
-
-  return previousMessageEdit.call(this, payload);
-};
-
-const previousTextChannelSend = TextChannel.prototype.send;
-TextChannel.prototype.send = async function bridgeProtectedSend(payload) {
-  const title = getEmbedTitle(payload?.embeds?.[0]);
-
-  if (
-    isManualMode() &&
-    this.id === STATUS_CHANNEL_ID &&
-    SERVER_ALERT_TITLES.has(title)
-  ) {
-    console.log(`ℹ️ [SERVERMODE-BRIDGE] Suppressed ${title} while ${bridgeMode} is active.`);
-    return { id: `servermode-bridge-suppressed-${Date.now()}` };
-  }
-
-  return previousTextChannelSend.call(this, payload);
-};
 
 async function findStatusMessage(client) {
   const channel = await client.channels.fetch(STATUS_CHANNEL_ID);
@@ -331,12 +293,6 @@ export async function initializeServerModeBridge(client) {
 
   if (client.user && !nativePresenceSetter) {
     nativePresenceSetter = client.user.setPresence.bind(client.user);
-    const bridgeUser = client.user;
-
-    bridgeUser.setPresence = async data => {
-      if (isManualMode()) return bridgeUser;
-      return nativePresenceSetter(data);
-    };
   }
 
   if (isManualMode()) {
