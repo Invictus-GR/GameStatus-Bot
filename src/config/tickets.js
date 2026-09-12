@@ -10,9 +10,6 @@ export const TICKET_CONFIG = Object.freeze({
     discordModerator: '1547296028913311774',
     discordAdmin: '1540715768625496135'
   }),
-  users: Object.freeze({
-    invictus: process.env.FAILSAFE_OWNER_ID?.trim() || null
-  })
 });
 
 const R = TICKET_CONFIG.roles;
@@ -81,7 +78,6 @@ export const TICKET_TYPES = Object.freeze({
     description: 'Apply to begin the Dedicated Pilot process.',
     initialRoleIds: [R.discordModerator],
     openingPingRoleIds: [R.owner, R.seniorAdmin, R.discordAdmin],
-    openingPingUserIds: [TICKET_CONFIG.users.invictus].filter(Boolean),
     escalationLevels: [],
     instructions: [
       '**Thank you for your interest in becoming a TLC Dedicated Pilot.**',
@@ -94,7 +90,6 @@ export const TICKET_TYPES = Object.freeze({
     description: 'Apply to begin the Drone Operator process.',
     initialRoleIds: [R.discordModerator],
     openingPingRoleIds: [R.owner, R.seniorAdmin, R.discordAdmin],
-    openingPingUserIds: [TICKET_CONFIG.users.invictus].filter(Boolean),
     escalationLevels: [],
     instructions: [
       '**Thank you for your interest in becoming a TLC Drone Operator.**',
