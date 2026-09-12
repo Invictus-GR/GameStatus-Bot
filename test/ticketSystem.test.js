@@ -16,12 +16,12 @@ const {
   parseTicketButton
 } = __ticketInternals;
 
-test('support dropdown exposes all six TLC ticket types', () => {
+test('support dropdown exposes all seven TLC ticket types', () => {
   const row = buildSupportSelectRow().toJSON();
   assert.equal(row.components.length, 1);
   assert.equal(row.components[0].custom_id, 'tlc_ticket_type');
   assert.equal(row.components[0].placeholder, 'Select a ticket type...');
-  assert.equal(row.components[0].options.length, 6);
+  assert.equal(row.components[0].options.length, 7);
   assert.deepEqual(
     row.components[0].options.map(option => option.value),
     [
@@ -30,7 +30,8 @@ test('support dropdown exposes all six TLC ticket types', () => {
       'content_creator',
       'donator_support',
       'developer_application',
-      'dedicated_pilot'
+      'dedicated_pilot',
+      'drone_operator'
     ]
   );
 });
@@ -158,5 +159,18 @@ test('all ticket types have unique labels and valid routing arrays', () => {
     assert.ok(Array.isArray(type.initialRoleIds));
     assert.ok(type.initialRoleIds.length > 0);
     assert.ok(Array.isArray(type.escalationLevels));
+  }
+});
+
+test('pilot and drone applications notify priority staff immediately without escalation', () => {
+  for (const key of ['dedicated_pilot', 'drone_operator']) {
+    const type = TICKET_TYPES[key];
+
+    assert.deepEqual(type.openingPingRoleIds, [
+      TICKET_CONFIG.roles.owner,
+      TICKET_CONFIG.roles.seniorAdmin,
+      TICKET_CONFIG.roles.discordAdmin
+    ]);
+    assert.deepEqual(type.escalationLevels, []);
   }
 });
