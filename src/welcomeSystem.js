@@ -18,7 +18,8 @@ const pool = new Pool({
 
 const WELCOME_CHANNEL_ID = process.env.WELCOME_CHANNEL_ID;
 const TIKTOK_URL = 'https://www.tiktok.com/@thelastcoalition';
-const COMMAND_NAME = 'welcomelogo';
+const LOGO_COMMAND_NAME = 'welcomelogo';
+const TEST_COMMAND_NAME = 'testwelcome';
 const DELAYED_REGISTRATION_MS = 105_000;
 const DEFAULT_LOGO_FILENAME = 'tlc-welcome-logo.png';
 
@@ -106,12 +107,72 @@ async function loadWelcomeLogo() {
   }
 }
 
-async function registerWelcomeLogoCommand(source = 'initial') {
+function buildWelcomeEmbed(member) {
+  return new EmbedBuilder()
+    .setTitle('WELCOME TO THE LAST COALITION')
+    .setDescription([
+      `Welcome ${member}!`,
+      '',
+      'Our game mode, **DEADLOCK**, is built around realistic and dynamic frontline warfare.',
+      '',
+      '__**How DEADLOCK works**__',
+      '',
+      '• **No traditional capture-point system**',
+      '• **Game Masters place objectives** across the battlefield',
+      '• **Both teams attack and defend** as the frontline shifts',
+      '• **Each round develops differently** depending on where the GM drives the battle',
+      '• Expect **trenches, towns, FOBs, buildings and open-ground fighting**',
+      '• **Combined arms matter** — infantry, armour, helicopters and support elements all have a role',
+      '',
+      'The goal is not simply to capture points. It is to **take ground, hold the line and break through the enemy**.',
+      '',
+      '__**DEADLOCK**__',
+      '**Controlled by the GM. Driven by the players. Built to TLC standards.**',
+      '',
+      `__**Follow TLC on TikTok**__\n${TIKTOK_URL}`
+    ].join('\n'))
+    .setFooter({ text: 'TLC Command • Welcome System' });
+}
+
+async function getWelcomeChannel() {
+  if (!WELCOME_CHANNEL_ID) {
+    throw new Error('WELCOME_CHANNEL_ID is not configured.');
+  }
+
+  const channel = await client.channels.fetch(WELCOME_CHANNEL_ID);
+  if (!channel?.isTextBased()) {
+    throw new Error('Welcome channel not found or is not text based.');
+  }
+
+  return channel;
+}
+
+async function sendWelcomeMessage(member) {
+  const channel = await getWelcomeChannel();
+  const logo = await loadWelcomeLogo();
+  const embed = buildWelcomeEmbed(member);
+  const payload = {
+    content: `${member}`,
+    embeds: [embed],
+    allowedMentions: { users: [member.id] }
+  };
+
+  if (logo) {
+    embed.setThumbnail(`attachment://${logo.filename}`);
+    payload.files = [
+      new AttachmentBuilder(logo.buffer, { name: logo.filename })
+    ];
+  }
+
+  await channel.send(payload);
+}
+
+async function registerWelcomeCommands(source = 'initial') {
   const token = process.env.DISCORD_BOT_TOKEN;
   const guildId = process.env.FAILSAFE_GUILD_ID;
 
   if (!token || !guildId) {
-    throw new Error('Missing bot token or guild ID for /welcomelogo registration.');
+    throw new Error('Missing bot token or guild ID for welcome command registration.');
   }
 
   const applicationId = Buffer
@@ -122,33 +183,42 @@ async function registerWelcomeLogoCommand(source = 'initial') {
     throw new Error('Could not derive Discord application ID from bot token.');
   }
 
-  const command = new SlashCommandBuilder()
-    .setName(COMMAND_NAME)
-    .setDescription('Set the TLC welcome message logo')
-    .addAttachmentOption(option =>
-      option
-        .setName('image')
-        .setDescription('The logo image to use as the welcome thumbnail')
-        .setRequired(true)
-    );
+  const commandsToRegister = [
+    new SlashCommandBuilder()
+      .setName(LOGO_COMMAND_NAME)
+      .setDescription('Set the TLC welcome message logo')
+      .addAttachmentOption(option =>
+        option
+          .setName('image')
+          .setDescription('The logo image to use as the welcome thumbnail')
+          .setRequired(true)
+      ),
+    new SlashCommandBuilder()
+      .setName(TEST_COMMAND_NAME)
+      .setDescription('Send a test TLC welcome message in the welcome channel')
+  ];
 
   const rest = new REST({ version: '10' }).setToken(token);
   const route = Routes.applicationGuildCommands(applicationId, guildId);
-  const commands = await rest.get(route);
-  const existing = Array.isArray(commands)
-    ? commands.find(entry => entry.name === COMMAND_NAME)
-    : null;
+  const existingCommands = await rest.get(route);
 
-  if (existing) {
-    await rest.patch(
-      Routes.applicationGuildCommand(applicationId, guildId, existing.id),
-      { body: command.toJSON() }
-    );
-  } else {
-    await rest.post(route, { body: command.toJSON() });
+  for (const command of commandsToRegister) {
+    const commandJson = command.toJSON();
+    const existing = Array.isArray(existingCommands)
+      ? existingCommands.find(entry => entry.name === commandJson.name)
+      : null;
+
+    if (existing) {
+      await rest.patch(
+        Routes.applicationGuildCommand(applicationId, guildId, existing.id),
+        { body: commandJson }
+      );
+    } else {
+      await rest.post(route, { body: commandJson });
+    }
   }
 
-  console.log(`✅ [WELCOME] /welcomelogo command registered (${source}).`);
+  console.log(`✅ [WELCOME] /welcomelogo and /testwelcome commands registered (${source}).`);
 }
 
 client.once('clientReady', () => {
@@ -156,43 +226,53 @@ client.once('clientReady', () => {
     console.error('❌ [WELCOME] Could not initialize welcome assets table:', error);
   });
 
-  void registerWelcomeLogoCommand('initial').catch(error => {
-    console.error('❌ [WELCOME] /welcomelogo initial registration failed:', error);
+  void registerWelcomeCommands('initial').catch(error => {
+    console.error('❌ [WELCOME] Initial welcome command registration failed:', error);
   });
 
   setTimeout(() => {
-    void registerWelcomeLogoCommand('post-core-registration').catch(error => {
-      console.error('❌ [WELCOME] /welcomelogo delayed registration failed:', error);
+    void registerWelcomeCommands('post-core-registration').catch(error => {
+      console.error('❌ [WELCOME] Delayed welcome command registration failed:', error);
     });
   }, DELAYED_REGISTRATION_MS);
 });
 
 client.on('interactionCreate', interaction => {
-  if (!interaction.isChatInputCommand() || interaction.commandName !== COMMAND_NAME) {
-    return;
-  }
+  if (!interaction.isChatInputCommand()) return;
+  if (![LOGO_COMMAND_NAME, TEST_COMMAND_NAME].includes(interaction.commandName)) return;
 
   void (async () => {
     if (!hasOverrideRole(interaction.member)) {
       await interaction.reply({
-        content: '❌ You are not authorized to change the TLC welcome logo.',
+        content: '❌ You are not authorized to use TLC welcome administration commands.',
         flags: MessageFlags.Ephemeral
       });
       return;
     }
 
+    if (interaction.commandName === LOGO_COMMAND_NAME) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const attachment = interaction.options.getAttachment('image', true);
+      await saveWelcomeLogo(attachment);
+      await interaction.editReply('✅ TLC welcome logo updated successfully.');
+      return;
+    }
+
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const attachment = interaction.options.getAttachment('image', true);
-    await saveWelcomeLogo(attachment);
-    await interaction.editReply('✅ TLC welcome logo updated successfully.');
+    await sendWelcomeMessage(interaction.member);
+    await interaction.editReply('✅ Test welcome sent to the configured welcome channel.');
   })().catch(async error => {
-    console.error('❌ [WELCOME] Failed to update welcome logo:', error);
+    console.error('❌ [WELCOME] Welcome command failed:', error);
+
+    const message = interaction.commandName === TEST_COMMAND_NAME
+      ? '❌ The test welcome could not be sent.'
+      : '❌ The welcome logo could not be updated.';
 
     if (interaction.deferred || interaction.replied) {
-      await interaction.editReply('❌ The welcome logo could not be updated.').catch(() => {});
+      await interaction.editReply(message).catch(() => {});
     } else {
       await interaction.reply({
-        content: '❌ The welcome logo could not be updated.',
+        content: message,
         flags: MessageFlags.Ephemeral
       }).catch(() => {});
     }
@@ -201,58 +281,9 @@ client.on('interactionCreate', interaction => {
 
 client.on('guildMemberAdd', async member => {
   if (member.user?.bot) return;
-  if (!WELCOME_CHANNEL_ID) {
-    console.warn('⚠️ [WELCOME] Disabled: WELCOME_CHANNEL_ID is not configured.');
-    return;
-  }
 
   try {
-    const channel = await client.channels.fetch(WELCOME_CHANNEL_ID);
-    if (!channel?.isTextBased()) {
-      console.error('❌ [WELCOME] Welcome channel not found or is not text based.');
-      return;
-    }
-
-    const logo = await loadWelcomeLogo();
-    const embed = new EmbedBuilder()
-      .setTitle('WELCOME TO THE LAST COALITION')
-      .setDescription([
-        `Welcome ${member}!`,
-        '',
-        'Our game mode, **DEADLOCK**, is built around realistic and dynamic frontline warfare.',
-        '',
-        '__**How DEADLOCK works**__',
-        '',
-        '• **No traditional capture-point system**',
-        '• **Game Masters place objectives** across the battlefield',
-        '• **Both teams attack and defend** as the frontline shifts',
-        '• **Each round develops differently** depending on where the GM drives the battle',
-        '• Expect **trenches, towns, FOBs, buildings and open-ground fighting**',
-        '• **Combined arms matter** — infantry, armour, helicopters and support elements all have a role',
-        '',
-        'The goal is not simply to capture points. It is to **take ground, hold the line and break through the enemy**.',
-        '',
-        '__**DEADLOCK**__',
-        '**Controlled by the GM. Driven by the players. Built to TLC standards.**',
-        '',
-        `__**Follow TLC on TikTok**__\n${TIKTOK_URL}`
-      ].join('\n'))
-      .setFooter({ text: 'TLC Command • Welcome System' });
-
-    const payload = {
-      content: `${member}`,
-      embeds: [embed],
-      allowedMentions: { users: [member.id] }
-    };
-
-    if (logo) {
-      embed.setThumbnail(`attachment://${logo.filename}`);
-      payload.files = [
-        new AttachmentBuilder(logo.buffer, { name: logo.filename })
-      ];
-    }
-
-    await channel.send(payload);
+    await sendWelcomeMessage(member);
     console.log(`✅ [WELCOME] Welcomed ${member.user.tag} (${member.id}).`);
   } catch (error) {
     console.error('❌ [WELCOME] Failed to send welcome message:', error);
