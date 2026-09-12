@@ -1,10 +1,9 @@
 import { Client } from 'discord.js';
-import pg from 'pg';
+import { pool } from './db.js';
 
 import { initializeTicketSystem } from './ticketSystem.js';
 import { applyTicketSupportBanner } from './ticketSupportBanner.js';
 
-const { Pool } = pg;
 const initializedClients = new WeakSet();
 const originalLogin = Client.prototype.login;
 
@@ -15,10 +14,6 @@ Client.prototype.login = function patchedLogin(...args) {
     initializedClients.add(client);
 
     client.once('clientReady', () => {
-      const pool = new Pool({
-        connectionString: process.env.DATABASE_URL
-      });
-
       void (async () => {
         await initializeTicketSystem({
           client,
@@ -28,7 +23,6 @@ Client.prototype.login = function patchedLogin(...args) {
         await applyTicketSupportBanner(client);
       })().catch(async error => {
         console.error('❌ [TICKETS] Ticket system initialization failed:', error);
-        await pool.end().catch(() => {});
       });
     });
   }

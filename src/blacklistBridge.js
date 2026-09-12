@@ -4,9 +4,7 @@ import {
   MessageFlags,
   SlashCommandBuilder
 } from 'discord.js';
-import pg from 'pg';
-
-const { Pool } = pg;
+import { pool } from './db.js';
 
 const OWNER_ID = process.env.FAILSAFE_OWNER_ID;
 const WARNING_LOG_CHANNEL_ID = '1540989189380640858';
@@ -15,10 +13,6 @@ const FOOTER_TEXT =
 const BLACKLIST_TABLE = 'discord_blacklist';
 const DISCORD_ID_PATTERN = /^\d{17,20}$/;
 const MAX_BLACKLIST_ENTRIES_PER_EMBED = 15;
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
-});
 
 export const prebanCommand = new SlashCommandBuilder()
   .setName('preban')

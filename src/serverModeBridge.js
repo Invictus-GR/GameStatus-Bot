@@ -8,9 +8,7 @@ import {
   SlashCommandBuilder,
   TextChannel
 } from 'discord.js';
-import pg from 'pg';
-
-const { Pool } = pg;
+import { pool } from './db.js';
 
 const STATUS_CHANNEL_ID = '1543309765243834428';
 const SERVER_NAME =
@@ -74,10 +72,6 @@ const SERVER_ALERT_TITLES = new Set([
   '🔴 TLC SERVER DOWN',
   '🟢 TLC SERVER ONLINE AGAIN'
 ]);
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
-});
 
 let bridgeMode = 'live';
 let bridgeUpdatedAt = new Date();

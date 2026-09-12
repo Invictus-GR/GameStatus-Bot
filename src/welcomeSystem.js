@@ -3,15 +3,10 @@ import {
   EmbedBuilder,
   MessageFlags
 } from 'discord.js';
-import pg from 'pg';
 
 import { client } from './bot.js';
+import { pool } from './db.js';
 import { TICKET_CLOSE_OVERRIDE_ROLE_IDS } from './config/tickets.js';
-
-const { Pool } = pg;
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
-});
 
 const WELCOME_CHANNEL_ID = process.env.WELCOME_CHANNEL_ID;
 const TIKTOK_URL = 'https://www.tiktok.com/@thelastcoalition';

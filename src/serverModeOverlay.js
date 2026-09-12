@@ -10,9 +10,7 @@ import {
   SlashCommandBuilder,
   TextChannel
 } from 'discord.js';
-import pg from 'pg';
-
-const { Pool } = pg;
+import { pool } from './db.js';
 
 const SERVER_URL =
   'https://www.armahq.com/servers/1d8007f8-bc4d-45a6-86db-f1091aed4300';
@@ -56,10 +54,6 @@ const SERVER_ALERT_TITLES = new Set([
   '🔴 TLC SERVER DOWN',
   '🟢 TLC SERVER ONLINE AGAIN'
 ]);
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
-});
 
 let serverMode = 'live';
 let serverModeUpdatedAt = new Date();

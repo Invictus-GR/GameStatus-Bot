@@ -16,7 +16,7 @@ import {
 
 import fetch from 'node-fetch';
 import cron from 'node-cron';
-import pg from 'pg';
+import { pool } from './db.js';
 import {
   backfillModsCommand,
   diagnosticCommand,
@@ -85,11 +85,6 @@ import {
   unprebanCommand
 } from './blacklistBridge.js';
 import { serverModeCommand } from './serverModeBridge.js';
-
-const { Pool } = pg;
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
-});
 
 async function testDatabaseConnection() {
   try {
