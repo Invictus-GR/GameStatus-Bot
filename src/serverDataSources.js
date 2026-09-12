@@ -70,7 +70,7 @@ export function normalizeBattleMetricsServer(payload) {
     isOnline,
     players,
     maxPlayers,
-    queue: 0,
+    queue: null,
     ...(serverName ? { serverName } : {}),
     __dataSource: 'BattleMetrics'
   };
