@@ -8,7 +8,9 @@ export const TICKET_CONFIG = Object.freeze({
     seniorAdmin: '1538451886758170744',
     owner: '1529632873987178668',
     discordModerator: '1547296028913311774',
-    discordAdmin: '1540715768625496135'
+    discordAdmin: '1540715768625496135',
+    traineePilot: '1546935180713926766',
+    traineeDroneOperator: '1548325333327945758'
   }),
 });
 
@@ -78,6 +80,13 @@ export const TICKET_TYPES = Object.freeze({
     description: 'Apply to begin the Dedicated Pilot process.',
     initialRoleIds: [R.discordModerator],
     openingPingRoleIds: [R.owner, R.seniorAdmin, R.discordAdmin],
+    traineeApproval: Object.freeze({
+      roleId: R.traineePilot,
+      roleName: 'Trainee Pilot',
+      nextRoleName: 'Dedicated Pilot',
+      accessChannelName: 'trainee pilot channel',
+      evaluationText: 'A member of the team will contact you there when possible to arrange your evaluation.'
+    }),
     escalationLevels: [],
     instructions: [
       '**Thank you for your interest in becoming a TLC Dedicated Pilot.**',
@@ -90,6 +99,13 @@ export const TICKET_TYPES = Object.freeze({
     description: 'Apply to begin the Drone Operator process.',
     initialRoleIds: [R.discordModerator],
     openingPingRoleIds: [R.owner, R.seniorAdmin, R.discordAdmin],
+    traineeApproval: Object.freeze({
+      roleId: R.traineeDroneOperator,
+      roleName: 'Trainee Drone Operator',
+      nextRoleName: 'Dedicated Drone Operator',
+      accessChannelName: 'trainee drone operator channel',
+      evaluationText: 'A member of the team will contact you there when possible to arrange your training and evaluation.'
+    }),
     escalationLevels: [],
     instructions: [
       '**Thank you for your interest in becoming a TLC Drone Operator.**',
@@ -102,4 +118,10 @@ export const TICKET_CLOSE_OVERRIDE_ROLE_IDS = Object.freeze([
   R.discordAdmin,
   R.owner,
   R.seniorAdmin
+]);
+
+export const TICKET_TRAINEE_APPROVER_ROLE_IDS = Object.freeze([
+  R.owner,
+  R.seniorAdmin,
+  R.discordAdmin
 ]);
