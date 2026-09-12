@@ -85,10 +85,14 @@ import {
 import { initializeTicketBootstrap } from './ticketBootstrap.js';
 import {
   blacklistCommand,
+  initializeBlacklistBridge,
   prebanCommand,
   unprebanCommand
 } from './blacklistBridge.js';
-import { serverModeCommand } from './serverModeBridge.js';
+import {
+  initializeServerModeBridge,
+  serverModeCommand
+} from './serverModeBridge.js';
 
 async function testDatabaseConnection() {
   try {
@@ -2617,6 +2621,18 @@ client.on('guildMemberRemove', async member => {
 client.once('clientReady', async () => {
   await testDatabaseConnection();
   await initializeDatabase();
+
+  try {
+    await initializeBlacklistBridge(client);
+  } catch (error) {
+    console.error('❌ [BLACKLIST] Initialization failed:', error);
+  }
+
+  try {
+    await initializeServerModeBridge(client);
+  } catch (error) {
+    console.error('❌ [SERVERMODE-BRIDGE] Initialization failed:', error);
+  }
 
   try {
     await initializeTicketBootstrap(client);

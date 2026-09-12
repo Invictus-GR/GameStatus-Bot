@@ -6,6 +6,8 @@ const botSource = await readFile(new URL('../src/bot.js', import.meta.url), 'utf
 const startSource = await readFile(new URL('../src/start.js', import.meta.url), 'utf8');
 const bootstrapSource = await readFile(new URL('../src/ticketBootstrap.js', import.meta.url), 'utf8');
 const supportBannerSource = await readFile(new URL('../src/supportBannerCommand.js', import.meta.url), 'utf8');
+const blacklistSource = await readFile(new URL('../src/blacklistBridge.js', import.meta.url), 'utf8');
+const serverModeSource = await readFile(new URL('../src/serverModeBridge.js', import.meta.url), 'utf8');
 
 test('existing mods button handler ignores TLC ticket button ids', () => {
   assert.match(botSource, /const isShowMods = interaction\.customId === 'show_mods';/);
@@ -38,4 +40,19 @@ test('ticket startup applies the exact support banner after initialization', () 
   assert.ok(initializeCall >= 0, 'ticket initialization call is missing');
   assert.ok(bannerCall >= 0, 'support banner call is missing');
   assert.ok(initializeCall < bannerCall, 'support banner must be applied after ticket initialization');
+});
+
+
+test('blacklist interactions use an explicit client handler instead of Client.emit patching', () => {
+  assert.doesNotMatch(blacklistSource, /Client\.prototype\.emit/);
+  assert.match(blacklistSource, /export async function initializeBlacklistBridge\(client\)/);
+  assert.match(botSource, /await initializeBlacklistBridge\(client\);/);
+  assert.doesNotMatch(startSource, /import '\.\/blacklistBridge\.js';/);
+});
+
+test('server mode interactions use an explicit client handler instead of Client.emit patching', () => {
+  assert.doesNotMatch(serverModeSource, /Client\.prototype\.emit/);
+  assert.match(serverModeSource, /export async function initializeServerModeBridge\(client\)/);
+  assert.match(botSource, /await initializeServerModeBridge\(client\);/);
+  assert.doesNotMatch(startSource, /import '\.\/serverModeBridge\.js';/);
 });

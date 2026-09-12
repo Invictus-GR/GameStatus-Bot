@@ -1,6 +1,5 @@
 import {
   ActivityType,
-  Client,
   EmbedBuilder,
   Message,
   MessageFlags,
@@ -136,8 +135,6 @@ async function persistMode(mode) {
   bridgeMode = result.rows[0].mode;
   bridgeUpdatedAt = new Date(result.rows[0].updated_at);
 }
-
-await restoreBridgeState();
 
 const previousMessageEdit = Message.prototype.edit;
 Message.prototype.edit = async function bridgeProtectedEdit(payload) {
@@ -302,35 +299,50 @@ async function handleServerModeInteraction(client, interaction) {
   }
 }
 
-const originalEmit = Client.prototype.emit;
-Client.prototype.emit = function serverModeBridgeEmit(eventName, ...args) {
-  if (eventName === 'interactionCreate') {
-    void handleServerModeInteraction(this, args[0]);
+const initializedClients = new WeakSet();
+let bridgeStateInitialization = null;
+
+async function ensureBridgeState() {
+  if (!bridgeStateInitialization) {
+    bridgeStateInitialization = restoreBridgeState().catch(error => {
+      bridgeStateInitialization = null;
+      throw error;
+    });
   }
 
-  if (eventName === 'clientReady') {
-    if (this.user && !nativePresenceSetter) {
-      nativePresenceSetter = this.user.setPresence.bind(this.user);
-      const bridgeUser = this.user;
+  return bridgeStateInitialization;
+}
 
-      bridgeUser.setPresence = async data => {
-        if (isManualMode()) return bridgeUser;
-        return nativePresenceSetter(data);
-      };
-    }
-
-    if (isManualMode()) {
-      setTimeout(() => {
-        renderManualPanel(this)
-          .then(() => setBridgePresence(this))
-          .catch(error => {
-            console.error('❌ [SERVERMODE-BRIDGE] Manual-mode restore failed:', error);
-          });
-      }, 1200);
-    }
+export async function initializeServerModeBridge(client) {
+  if (!client) {
+    throw new TypeError('Discord client is required for server mode initialization.');
   }
 
-  return originalEmit.call(this, eventName, ...args);
-};
+  await ensureBridgeState();
 
-console.log('✅ [SERVERMODE-BRIDGE] Interaction bridge armed.');
+  if (initializedClients.has(client)) return;
+  initializedClients.add(client);
+
+  client.on('interactionCreate', interaction => {
+    void handleServerModeInteraction(client, interaction).catch(error => {
+      console.error('❌ [SERVERMODE-BRIDGE] Interaction handler failed:', error);
+    });
+  });
+
+  if (client.user && !nativePresenceSetter) {
+    nativePresenceSetter = client.user.setPresence.bind(client.user);
+    const bridgeUser = client.user;
+
+    bridgeUser.setPresence = async data => {
+      if (isManualMode()) return bridgeUser;
+      return nativePresenceSetter(data);
+    };
+  }
+
+  if (isManualMode()) {
+    await renderManualPanel(client);
+    await setBridgePresence(client);
+  }
+
+  console.log('✅ [SERVERMODE-BRIDGE] Interaction handler registered.');
+}

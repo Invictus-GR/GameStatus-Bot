@@ -1,5 +1,4 @@
 import {
-  Client,
   EmbedBuilder,
   MessageFlags,
   SlashCommandBuilder
@@ -414,19 +413,35 @@ async function handleBlacklistInteraction(client, interaction) {
   }
 }
 
-await initializeBlacklistDatabase().catch(error => {
-  console.error('❌ [BLACKLIST] Database initialization failed:', error);
-});
+const initializedClients = new WeakSet();
+let databaseInitialization = null;
 
-const originalEmit = Client.prototype.emit;
-Client.prototype.emit = function blacklistBridgeEmit(eventName, ...args) {
-  if (eventName === 'interactionCreate') {
-    void handleBlacklistInteraction(this, args[0]).catch(error => {
-      console.error('❌ [BLACKLIST] Interaction bridge failed:', error);
+async function ensureBlacklistDatabase() {
+  if (!databaseInitialization) {
+    databaseInitialization = initializeBlacklistDatabase().catch(error => {
+      databaseInitialization = null;
+      throw error;
     });
   }
 
-  return originalEmit.call(this, eventName, ...args);
-};
+  return databaseInitialization;
+}
 
-console.log('✅ [BLACKLIST] Interaction bridge armed.');
+export async function initializeBlacklistBridge(client) {
+  if (!client) {
+    throw new TypeError('Discord client is required for blacklist initialization.');
+  }
+
+  await ensureBlacklistDatabase();
+
+  if (initializedClients.has(client)) return;
+  initializedClients.add(client);
+
+  client.on('interactionCreate', interaction => {
+    void handleBlacklistInteraction(client, interaction).catch(error => {
+      console.error('❌ [BLACKLIST] Interaction bridge failed:', error);
+    });
+  });
+
+  console.log('✅ [BLACKLIST] Interaction handler registered.');
+}
