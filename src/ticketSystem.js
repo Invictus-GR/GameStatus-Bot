@@ -16,6 +16,7 @@ import {
 import {
   TICKET_CLOSE_OVERRIDE_ROLE_IDS,
   TICKET_CONFIG,
+  TICKET_TRAINEE_APPROVER_ROLE_IDS,
   TICKET_TYPES
 } from './config/tickets.js';
 
@@ -73,6 +74,10 @@ function canClose(member, ticket) {
   return hasAnyRole(member, TICKET_CLOSE_OVERRIDE_ROLE_IDS);
 }
 
+function canApproveTrainee(member) {
+  return hasAnyRole(member, TICKET_TRAINEE_APPROVER_ROLE_IDS);
+}
+
 function buildSupportSelectRow() {
   const menu = new StringSelectMenuBuilder()
     .setCustomId(SUPPORT_MENU_ID)
@@ -115,6 +120,18 @@ function buildTicketButtons(ticket) {
       .setLabel('Claim')
       .setStyle(ButtonStyle.Primary)
   ];
+
+  const type = getTicketType(ticket.ticket_type);
+
+  if (type?.traineeApproval) {
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(`${BUTTON_PREFIX}approve_trainee:${ticketNumber}`)
+        .setLabel(ticket.trainee_approved_at ? 'Trainee Approved' : 'Approve as Trainee')
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(Boolean(ticket.trainee_approved_at))
+    );
+  }
 
   if (getNextEscalationRoleIds(ticket).length > 0) {
     buttons.push(
@@ -244,11 +261,23 @@ async function initializeTicketDatabase(pool, guild) {
       current_handler_id TEXT,
       previous_handler_id TEXT,
       escalation_index INTEGER NOT NULL DEFAULT 0 CHECK (escalation_index >= 0),
+      trainee_approved_at TIMESTAMPTZ,
+      trainee_approved_by_id TEXT,
       opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       closed_at TIMESTAMPTZ,
       closed_by_id TEXT,
       close_reason TEXT
     );
+  `);
+
+  await pool.query(`
+    ALTER TABLE tlc_tickets
+    ADD COLUMN IF NOT EXISTS trainee_approved_at TIMESTAMPTZ;
+  `);
+
+  await pool.query(`
+    ALTER TABLE tlc_tickets
+    ADD COLUMN IF NOT EXISTS trainee_approved_by_id TEXT;
   `);
 
   await pool.query(`
@@ -529,7 +558,7 @@ async function createTicketFromSelection({ interaction, client, pool, footerText
 }
 
 function parseTicketButton(customId) {
-  const match = /^tlc_ticket_(claim|escalate|close|close_reason):(\d+)$/.exec(customId);
+  const match = /^tlc_ticket_(claim|escalate|approve_trainee|close|close_reason):(\d+)$/.exec(customId);
   if (!match) return null;
 
   return {
@@ -656,6 +685,101 @@ async function handleEscalate({ interaction, client, pool, footerText, ticket })
   await interaction.editReply('✅ Ticket escalated. The current handler has been released.');
 }
 
+async function handleApproveTrainee({ interaction, client, pool, footerText, ticket }) {
+  const type = getTicketType(ticket.ticket_type);
+  const approval = type?.traineeApproval;
+
+  if (!approval) {
+    return interaction.reply({
+      content: '❌ This ticket type does not support trainee approval.',
+      flags: MessageFlags.Ephemeral
+    });
+  }
+
+  if (!canApproveTrainee(interaction.member)) {
+    return interaction.reply({
+      content: '❌ Only Owner, Senior Admin, or Discord Admin can approve trainee roles.',
+      flags: MessageFlags.Ephemeral
+    });
+  }
+
+  if (ticket.trainee_approved_at) {
+    return interaction.reply({
+      content: 'ℹ️ This applicant has already been approved as a trainee through this ticket.',
+      flags: MessageFlags.Ephemeral
+    });
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const guild = interaction.guild;
+  const applicant = await guild.members.fetch(ticket.opener_id).catch(() => null);
+
+  if (!applicant) {
+    return interaction.editReply('❌ The applicant is no longer available in this Discord server.');
+  }
+
+  try {
+    if (!applicant.roles.cache.has(approval.roleId)) {
+      await applicant.roles.add(
+        approval.roleId,
+        `TLC ticket #${ticket.ticket_number} trainee approval by ${interaction.user.tag}`
+      );
+    }
+  } catch (error) {
+    console.error(`[TICKETS] Could not assign trainee role for ticket-${ticket.ticket_number}:`, error);
+    return interaction.editReply(
+      '❌ I could not assign the trainee role. Please check the bot role hierarchy and permissions.'
+    );
+  }
+
+  const result = await pool.query(`
+    UPDATE tlc_tickets
+    SET
+      trainee_approved_at = NOW(),
+      trainee_approved_by_id = $2
+    WHERE ticket_number = $1
+      AND trainee_approved_at IS NULL
+    RETURNING *;
+  `, [ticket.ticket_number, interaction.user.id]);
+
+  if (result.rows.length === 0) {
+    return interaction.editReply('ℹ️ This applicant has already been approved as a trainee through this ticket.');
+  }
+
+  const updated = result.rows[0];
+
+  await recordTicketEvent(pool, ticket.ticket_number, 'trainee_approved', interaction.user.id, {
+    applicantId: ticket.opener_id,
+    roleId: approval.roleId,
+    roleName: approval.roleName
+  });
+
+  await updateTicketPanel(client, pool, updated, footerText);
+
+  await interaction.channel.send({
+    content: [
+      `${userMention(ticket.opener_id)}, your application has been approved for the **${approval.roleName}** stage.`,
+      '',
+      `You have now been given the **${approval.roleName}** role and access to the ${approval.accessChannelName}.`,
+      '',
+      approval.evaluationText,
+      '',
+      `Once you successfully complete the evaluation, you will be considered for the **${approval.nextRoleName}** role.`,
+      '',
+      'This ticket can now be closed.'
+    ].join('\n'),
+    allowedMentions: {
+      users: [ticket.opener_id],
+      roles: []
+    }
+  });
+
+  return interaction.editReply(
+    `✅ ${approval.roleName} assigned to ${userMention(ticket.opener_id)} and the approval message was posted.`
+  );
+}
+
 function buildCloseReasonModal(ticketNumber) {
   const modal = new ModalBuilder()
     .setCustomId(`${CLOSE_REASON_MODAL_PREFIX}${ticketNumber}`)
@@ -714,6 +838,9 @@ function eventSummary(event) {
   }
   if (event.event_type === 'claimed') {
     return `Claimed by ${event.actor_id ? userMention(event.actor_id) : 'unknown staff'}`;
+  }
+  if (event.event_type === 'trainee_approved') {
+    return `Trainee role approved by ${event.actor_id ? userMention(event.actor_id) : 'unknown staff'}`;
   }
   if (event.event_type === 'escalated') {
     const roles = Array.isArray(details.toRoleIds)
@@ -1006,6 +1133,11 @@ async function handleTicketButton({ interaction, client, pool, footerText }) {
     return true;
   }
 
+  if (parsed.action === 'approve_trainee') {
+    await handleApproveTrainee({ interaction, client, pool, footerText, ticket });
+    return true;
+  }
+
   if (parsed.action === 'close') {
     await closeTicket({
       interaction,
@@ -1120,5 +1252,6 @@ export const __ticketInternals = {
   buildTicketButtons,
   getCurrentHandlerRoleIds,
   getNextEscalationRoleIds,
-  parseTicketButton
+  parseTicketButton,
+  canApproveTrainee
 };
