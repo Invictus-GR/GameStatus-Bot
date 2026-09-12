@@ -66,7 +66,7 @@ function getNextEscalationRoleIds(ticket) {
 }
 
 function canClaim(member, ticket) {
-  return hasAnyRole(member, getCurrentHandlerRoleIds(ticket));
+  return hasAnyRole(member, TICKET_CLOSE_OVERRIDE_ROLE_IDS) || hasAnyRole(member, getCurrentHandlerRoleIds(ticket));
 }
 
 function canClose(member, ticket) {
