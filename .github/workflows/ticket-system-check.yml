@@ -1,8 +1,9 @@
-name: TLC Ticket System Check
+name: TLC Bot Check
 
 on:
   push:
     branches:
+      - main
       - feature/tlc-ticket-system
   pull_request:
     branches:
@@ -33,13 +34,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Syntax check ticket system
-        run: |
-          node --check src/ticketSystem.js
-          node --check src/ticketBootstrap.js
-          node --check src/ticketSupportBanner.js
-          node --check src/config/tickets.js
-          node --check src/start.js
+      - name: Syntax check all source files
+        run: find src -type f -name '*.js' -print0 | xargs -0 -n1 node --check
 
       - name: Verify support banner asset
         run: test -s assets/tlc-support-banner.jpg
