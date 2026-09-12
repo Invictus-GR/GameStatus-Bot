@@ -3,8 +3,6 @@ import {
   Client,
   EmbedBuilder,
   MessageFlags,
-  REST,
-  Routes,
   SlashCommandBuilder
 } from 'discord.js';
 
@@ -15,7 +13,16 @@ import {
 
 const SUPPORT_MENU_ID = 'tlc_ticket_type';
 const COMMAND_NAME = 'supportbanner';
-const DELAYED_REGISTRATION_MS = 105_000;
+
+export const supportBannerCommand = new SlashCommandBuilder()
+  .setName(COMMAND_NAME)
+  .setDescription('Replace the TLC Support Center banner')
+  .addAttachmentOption(option =>
+    option
+      .setName('image')
+      .setDescription('The exact banner image to use')
+      .setRequired(true)
+  );
 
 function hasOverrideRole(member) {
   return member?.roles?.cache?.some(role =>
@@ -89,50 +96,6 @@ async function applyUploadedBanner(client, attachment) {
   console.log(`[TICKETS] Support banner replaced from Discord upload (${filename}, ${buffer.length} bytes).`);
 }
 
-async function registerSupportBannerCommand(client, source = 'initial') {
-  const token = process.env.DISCORD_BOT_TOKEN;
-  const guildId = process.env.FAILSAFE_GUILD_ID;
-  if (!token || !guildId) {
-    throw new Error('Missing bot token or guild ID for /supportbanner registration.');
-  }
-
-  const applicationId = Buffer
-    .from(token.split('.')[0], 'base64')
-    .toString('utf8');
-
-  if (!/^\d+$/.test(applicationId)) {
-    throw new Error('Could not derive Discord application ID from bot token.');
-  }
-
-  const command = new SlashCommandBuilder()
-    .setName(COMMAND_NAME)
-    .setDescription('Replace the TLC Support Center banner')
-    .addAttachmentOption(option =>
-      option
-        .setName('image')
-        .setDescription('The exact banner image to use')
-        .setRequired(true)
-    );
-
-  const rest = new REST({ version: '10' }).setToken(token);
-  const route = Routes.applicationGuildCommands(applicationId, guildId);
-  const commands = await rest.get(route);
-  const existing = Array.isArray(commands)
-    ? commands.find(entry => entry.name === COMMAND_NAME)
-    : null;
-
-  if (existing) {
-    await rest.patch(
-      Routes.applicationGuildCommand(applicationId, guildId, existing.id),
-      { body: command.toJSON() }
-    );
-  } else {
-    await rest.post(route, { body: command.toJSON() });
-  }
-
-  console.log(`✅ [TICKETS] /supportbanner command registered (${source}).`);
-}
-
 const initializedClients = new WeakSet();
 const originalLogin = Client.prototype.login;
 
@@ -141,18 +104,6 @@ Client.prototype.login = function patchedSupportBannerLogin(...args) {
 
   if (!initializedClients.has(client)) {
     initializedClients.add(client);
-
-    client.once('clientReady', () => {
-      void registerSupportBannerCommand(client, 'initial').catch(error => {
-        console.error('❌ [TICKETS] /supportbanner initial registration failed:', error);
-      });
-
-      setTimeout(() => {
-        void registerSupportBannerCommand(client, 'post-core-registration').catch(error => {
-          console.error('❌ [TICKETS] /supportbanner delayed registration failed:', error);
-        });
-      }, DELAYED_REGISTRATION_MS);
-    });
 
     client.on('interactionCreate', interaction => {
       if (!interaction.isChatInputCommand() || interaction.commandName !== COMMAND_NAME) {
