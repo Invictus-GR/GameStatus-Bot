@@ -64,6 +64,10 @@ import {
   modChangesCommand
 } from './modChangesCommand.js';
 import {
+  testWelcomeCommand,
+  welcomeLogoCommand
+} from './welcomeCommands.js';
+import {
   buildRollingModAlertDescription,
   countRollingModChanges,
   createRollingModEventRows,
@@ -2622,10 +2626,12 @@ client.once('clientReady', async () => {
     sayCommand,
     diagnosticCommand,
     backfillModsCommand,
-    modChangesCommand
+    modChangesCommand,
+    welcomeLogoCommand,
+    testWelcomeCommand
   ]);
   console.log(
-    '/changelog, /warn, /say, /test, /backfillmods and /modchanges commands registered'
+    '/changelog, /warn, /say, /test, /backfillmods, /modchanges, /welcomelogo and /testwelcome commands registered'
   );
   console.log(`Discord bot connected as ${client.user.tag}`);
 
