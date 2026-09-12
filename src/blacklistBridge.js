@@ -2,8 +2,6 @@ import {
   Client,
   EmbedBuilder,
   MessageFlags,
-  REST,
-  Routes,
   SlashCommandBuilder
 } from 'discord.js';
 import pg from 'pg';
@@ -11,7 +9,6 @@ import pg from 'pg';
 const { Pool } = pg;
 
 const OWNER_ID = process.env.FAILSAFE_OWNER_ID;
-const GUILD_ID = process.env.FAILSAFE_GUILD_ID;
 const WARNING_LOG_CHANNEL_ID = '1540989189380640858';
 const FOOTER_TEXT =
   'TLC Command • Custom development © 2026 MSgt_Invictus_GR for TLC';
@@ -423,49 +420,6 @@ async function handleBlacklistInteraction(client, interaction) {
   }
 }
 
-async function registerBlacklistCommands() {
-  const token = process.env.DISCORD_BOT_TOKEN;
-
-  if (!token || !GUILD_ID) {
-    console.error('❌ [BLACKLIST] Cannot register commands: missing bot token or guild ID.');
-    return;
-  }
-
-  try {
-    const applicationId = Buffer
-      .from(token.split('.')[0], 'base64')
-      .toString('utf8');
-
-    if (!/^\d+$/.test(applicationId)) {
-      throw new Error('Could not derive Discord application ID from bot token.');
-    }
-
-    const rest = new REST({ version: '10' }).setToken(token);
-    const route = Routes.applicationGuildCommands(applicationId, GUILD_ID);
-    const commands = await rest.get(route);
-
-    for (const commandBuilder of [prebanCommand, unprebanCommand, blacklistCommand]) {
-      const body = commandBuilder.toJSON();
-      const existing = Array.isArray(commands)
-        ? commands.find(command => command.name === body.name)
-        : null;
-
-      if (existing) {
-        await rest.patch(
-          Routes.applicationGuildCommand(applicationId, GUILD_ID, existing.id),
-          { body }
-        );
-      } else {
-        await rest.post(route, { body });
-      }
-    }
-
-    console.log('✅ [BLACKLIST] /preban, /unpreban and /blacklist commands registered.');
-  } catch (error) {
-    console.error('❌ [BLACKLIST] Command registration failed:', error);
-  }
-}
-
 await initializeBlacklistDatabase().catch(error => {
   console.error('❌ [BLACKLIST] Database initialization failed:', error);
 });
@@ -480,11 +434,5 @@ Client.prototype.emit = function blacklistBridgeEmit(eventName, ...args) {
 
   return originalEmit.call(this, eventName, ...args);
 };
-
-setTimeout(() => {
-  registerBlacklistCommands().catch(error => {
-    console.error('❌ [BLACKLIST] Delayed command registration failed:', error);
-  });
-}, 5000);
 
 console.log('✅ [BLACKLIST] Interaction bridge armed.');
