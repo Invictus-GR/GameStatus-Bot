@@ -152,9 +152,7 @@ async function sendWelcomeMessage(member) {
   const logo = await loadWelcomeLogo();
   const embed = buildWelcomeEmbed(member);
   const payload = {
-    content: `${member}`,
-    embeds: [embed],
-    allowedMentions: { users: [member.id] }
+    embeds: [embed]
   };
 
   if (logo) {
