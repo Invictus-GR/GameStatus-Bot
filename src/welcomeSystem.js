@@ -1,15 +1,16 @@
 import {
   AttachmentBuilder,
   EmbedBuilder,
-  MessageFlags,
-  REST,
-  Routes,
-  SlashCommandBuilder
+  MessageFlags
 } from 'discord.js';
 import pg from 'pg';
 
 import { client } from './bot.js';
 import { TICKET_CLOSE_OVERRIDE_ROLE_IDS } from './config/tickets.js';
+import {
+  TEST_WELCOME_COMMAND_NAME,
+  WELCOME_WELCOME_LOGO_COMMAND_NAME
+} from './welcomeCommands.js';
 
 const { Pool } = pg;
 const pool = new Pool({
@@ -18,9 +19,6 @@ const pool = new Pool({
 
 const WELCOME_CHANNEL_ID = process.env.WELCOME_CHANNEL_ID;
 const TIKTOK_URL = 'https://www.tiktok.com/@thelastcoalition';
-const LOGO_COMMAND_NAME = 'welcomelogo';
-const TEST_COMMAND_NAME = 'testwelcome';
-const DELAYED_REGISTRATION_MS = 105_000;
 const DEFAULT_LOGO_FILENAME = 'tlc-welcome-logo.png';
 
 function hasOverrideRole(member) {
@@ -152,7 +150,13 @@ async function sendWelcomeMessage(member) {
   const logo = await loadWelcomeLogo();
   const embed = buildWelcomeEmbed(member);
   const payload = {
-    embeds: [embed]
+    content: `<@${member.id}>`,
+    embeds: [embed],
+    allowedMentions: {
+      users: [member.id],
+      roles: [],
+      parse: []
+    }
   };
 
   if (logo) {
@@ -162,82 +166,39 @@ async function sendWelcomeMessage(member) {
     ];
   }
 
-  await channel.send(payload);
-}
+  const sentMessage = await channel.send(payload);
 
-async function registerWelcomeCommands(source = 'initial') {
-  const token = process.env.DISCORD_BOT_TOKEN;
-  const guildId = process.env.FAILSAFE_GUILD_ID;
+  console.log(
+    `[WELCOME] Sent message ${sentMessage.id} to #${channel.name ?? 'unknown'} (${channel.id}) for ${member.user?.tag ?? member.id}.`
+  );
 
-  if (!token || !guildId) {
-    throw new Error('Missing bot token or guild ID for welcome command registration.');
-  }
+  setTimeout(() => {
+    void channel.messages.fetch(sentMessage.id)
+      .then(() => {
+        console.log(
+          `[WELCOME] Verified message ${sentMessage.id} still exists in channel ${channel.id}.`
+        );
+      })
+      .catch(error => {
+        console.error(
+          `[WELCOME] Message ${sentMessage.id} disappeared from channel ${channel.id} after send:`,
+          error?.message ?? error
+        );
+      });
+  }, 5000);
 
-  const applicationId = Buffer
-    .from(token.split('.')[0], 'base64')
-    .toString('utf8');
-
-  if (!/^\d+$/.test(applicationId)) {
-    throw new Error('Could not derive Discord application ID from bot token.');
-  }
-
-  const commandsToRegister = [
-    new SlashCommandBuilder()
-      .setName(LOGO_COMMAND_NAME)
-      .setDescription('Set the TLC welcome message logo')
-      .addAttachmentOption(option =>
-        option
-          .setName('image')
-          .setDescription('The logo image to use as the welcome thumbnail')
-          .setRequired(true)
-      ),
-    new SlashCommandBuilder()
-      .setName(TEST_COMMAND_NAME)
-      .setDescription('Send a test TLC welcome message in the welcome channel')
-  ];
-
-  const rest = new REST({ version: '10' }).setToken(token);
-  const route = Routes.applicationGuildCommands(applicationId, guildId);
-  const existingCommands = await rest.get(route);
-
-  for (const command of commandsToRegister) {
-    const commandJson = command.toJSON();
-    const existing = Array.isArray(existingCommands)
-      ? existingCommands.find(entry => entry.name === commandJson.name)
-      : null;
-
-    if (existing) {
-      await rest.patch(
-        Routes.applicationGuildCommand(applicationId, guildId, existing.id),
-        { body: commandJson }
-      );
-    } else {
-      await rest.post(route, { body: commandJson });
-    }
-  }
-
-  console.log(`✅ [WELCOME] /welcomelogo and /testwelcome commands registered (${source}).`);
+  return sentMessage;
 }
 
 client.once('clientReady', () => {
   void ensureWelcomeAssetTable().catch(error => {
     console.error('❌ [WELCOME] Could not initialize welcome assets table:', error);
   });
-
-  void registerWelcomeCommands('initial').catch(error => {
-    console.error('❌ [WELCOME] Initial welcome command registration failed:', error);
-  });
-
-  setTimeout(() => {
-    void registerWelcomeCommands('post-core-registration').catch(error => {
-      console.error('❌ [WELCOME] Delayed welcome command registration failed:', error);
-    });
-  }, DELAYED_REGISTRATION_MS);
 });
 
 client.on('interactionCreate', interaction => {
   if (!interaction.isChatInputCommand()) return;
-  if (![LOGO_COMMAND_NAME, TEST_COMMAND_NAME].includes(interaction.commandName)) return;
+  if (![WELCOME_LOGO_COMMAND_NAME, TEST_WELCOME_COMMAND_NAME].includes(interaction.commandName)) return;
 
   void (async () => {
     if (!hasOverrideRole(interaction.member)) {
@@ -248,7 +209,7 @@ client.on('interactionCreate', interaction => {
       return;
     }
 
-    if (interaction.commandName === LOGO_COMMAND_NAME) {
+    if (interaction.commandName === WELCOME_LOGO_COMMAND_NAME) {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const attachment = interaction.options.getAttachment('image', true);
       await saveWelcomeLogo(attachment);
@@ -262,7 +223,7 @@ client.on('interactionCreate', interaction => {
   })().catch(async error => {
     console.error('❌ [WELCOME] Welcome command failed:', error);
 
-    const message = interaction.commandName === TEST_COMMAND_NAME
+    const message = interaction.commandName === TEST_WELCOME_COMMAND_NAME
       ? '❌ The test welcome could not be sent.'
       : '❌ The welcome logo could not be updated.';
 
