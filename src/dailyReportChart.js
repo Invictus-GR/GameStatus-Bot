@@ -54,7 +54,7 @@ function normalizeSample(sample) {
   return {
     sampledAtMs,
     players: clamp(Number(sample?.players) || 0, 0, 128),
-    queue: clamp(Number(sample?.queue) || 0, 0, 25),
+    queue: sample?.queue == null ? null : clamp(Number(sample.queue) || 0, 0, 25),
     isOnline: sample?.isOnline ?? sample?.is_online ?? true
   };
 }
@@ -75,6 +75,15 @@ function buildLineSegments(samples, key, xScale, yScale) {
   let previousTimestamp = null;
 
   for (const sample of samples) {
+    const value = sample[key];
+
+    if (value == null || !Number.isFinite(value)) {
+      if (current.length > 0) segments.push(current);
+      current = [];
+      previousTimestamp = null;
+      continue;
+    }
+
     if (
       previousTimestamp !== null &&
       sample.sampledAtMs - previousTimestamp > maximumGapMs
@@ -85,7 +94,7 @@ function buildLineSegments(samples, key, xScale, yScale) {
 
     current.push([
       xScale(sample.sampledAtMs),
-      yScale(sample[key])
+      yScale(value)
     ]);
     previousTimestamp = sample.sampledAtMs;
   }
@@ -171,7 +180,7 @@ export function buildDailyReportChartSvg({
     0
   );
   const peakQueue = normalizedSamples.reduce(
-    (peak, sample) => Math.max(peak, sample.queue),
+    (peak, sample) => sample.queue == null ? peak : Math.max(peak, sample.queue),
     0
   );
   const plotLeft = 92;
