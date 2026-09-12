@@ -208,9 +208,14 @@ async function initializeDatabase() {
       CREATE TABLE IF NOT EXISTS server_metric_samples (
         sampled_at TIMESTAMPTZ PRIMARY KEY,
         players SMALLINT NOT NULL CHECK (players BETWEEN 0 AND 128),
-        queue SMALLINT NOT NULL CHECK (queue BETWEEN 0 AND 25),
+        queue SMALLINT CHECK (queue BETWEEN 0 AND 25),
         is_online BOOLEAN NOT NULL
       );
+    `);
+
+    await pool.query(`
+      ALTER TABLE server_metric_samples
+      ALTER COLUMN queue DROP NOT NULL;
     `);
 
     await pool.query(`
@@ -225,6 +230,9 @@ async function initializeDatabase() {
 }
 
 async function recordDailyServerStats(players, queue) {
+  const queueKnown = Number.isInteger(queue) && queue >= 0;
+  const safeQueue = queueKnown ? queue : 0;
+
   try {
     await pool.query(`
       INSERT INTO daily_stats (
@@ -244,10 +252,10 @@ async function recordDailyServerStats(players, queue) {
         $1,
         $2,
         1,
-        LEAST($3, 25),
-        $3 >= 10,
-        $3 >= 20,
-        $3 >= 25,
+        CASE WHEN $4::boolean THEN LEAST($3, 25) ELSE 0 END,
+        CASE WHEN $4::boolean THEN $3 >= 10 ELSE FALSE END,
+        CASE WHEN $4::boolean THEN $3 >= 20 ELSE FALSE END,
+        CASE WHEN $4::boolean THEN $3 >= 25 ELSE FALSE END,
         1,
         NOW()
       )
@@ -255,13 +263,25 @@ async function recordDailyServerStats(players, queue) {
         peak_players = GREATEST(daily_stats.peak_players, EXCLUDED.peak_players),
         player_sum = daily_stats.player_sum + EXCLUDED.player_sum,
         player_samples = daily_stats.player_samples + 1,
-        peak_queue = GREATEST(daily_stats.peak_queue, EXCLUDED.peak_queue),
-        queue_10_reached = daily_stats.queue_10_reached OR EXCLUDED.queue_10_reached,
-        queue_20_reached = daily_stats.queue_20_reached OR EXCLUDED.queue_20_reached,
-        queue_25_reached = daily_stats.queue_25_reached OR EXCLUDED.queue_25_reached,
+        peak_queue = CASE
+          WHEN $4::boolean THEN GREATEST(daily_stats.peak_queue, EXCLUDED.peak_queue)
+          ELSE daily_stats.peak_queue
+        END,
+        queue_10_reached = CASE
+          WHEN $4::boolean THEN daily_stats.queue_10_reached OR EXCLUDED.queue_10_reached
+          ELSE daily_stats.queue_10_reached
+        END,
+        queue_20_reached = CASE
+          WHEN $4::boolean THEN daily_stats.queue_20_reached OR EXCLUDED.queue_20_reached
+          ELSE daily_stats.queue_20_reached
+        END,
+        queue_25_reached = CASE
+          WHEN $4::boolean THEN daily_stats.queue_25_reached OR EXCLUDED.queue_25_reached
+          ELSE daily_stats.queue_25_reached
+        END,
         status_checks = daily_stats.status_checks + 1,
         updated_at = NOW();
-    `, [players, players, queue]);
+    `, [players, players, safeQueue, queueKnown]);
   } catch (error) {
     console.error('❌ Failed to record daily server stats:', error);
   }
@@ -281,7 +301,7 @@ async function recordServerMetricSample(players, queue, isOnline) {
           FLOOR(EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) / $4::integer) * $4::integer
         ),
         $1,
-        LEAST($2, 25),
+        CASE WHEN $2::integer IS NULL THEN NULL ELSE LEAST($2, 25) END,
         $3
       )
       ON CONFLICT (sampled_at) DO UPDATE SET
@@ -355,7 +375,7 @@ async function getYesterdayDailyReportData() {
     samples: samplesResult.rows.map(sample => ({
       sampledAtMs: Number(sample.sampled_at_ms),
       players: Number(sample.players),
-      queue: Number(sample.queue),
+      queue: sample.queue == null ? null : Number(sample.queue),
       isOnline: sample.is_online
     }))
   };
@@ -1525,7 +1545,7 @@ async function renderStatusPanel({
   state,
   players = null,
   maxPlayers = null,
-  queue = 0,
+  queue = null,
   activeMods = null,
   dataSource = 'Unavailable'
 }) {
@@ -1547,7 +1567,9 @@ async function renderStatusPanel({
         },
         {
           name: '⏳ Queue Capacity',
-          value: formatCapacityField(queue, SERVER_QUEUE_CAPACITY),
+          value: queue == null
+            ? '**Unknown from current data source**'
+            : formatCapacityField(queue, SERVER_QUEUE_CAPACITY),
           inline: false
         },
         {
@@ -1800,14 +1822,19 @@ async function updateServerStatus() {
     }
 
     const { players, maxPlayers, queue } = serverData;
-    const playerDisplay = queue > 0
+    const queueKnown = Number.isInteger(queue) && queue >= 0;
+    const playerDisplay = queueKnown && queue > 0
       ? `(+${queue}) ${players}/${maxPlayers}`
       : `${players}/${maxPlayers}`;
 
-    try {
-      await checkQueueAlerts(queue, players, maxPlayers);
-    } catch (error) {
-      console.error('Queue alert check failed:', error);
+    if (queueKnown) {
+      try {
+        await checkQueueAlerts(queue, players, maxPlayers);
+      } catch (error) {
+        console.error('Queue alert check failed:', error);
+      }
+    } else {
+      console.log('Queue data unavailable from current source; preserving existing queue alerts and statistics.');
     }
 
     await recordDailyServerStats(players, queue);
