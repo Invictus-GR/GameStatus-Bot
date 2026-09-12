@@ -7,10 +7,6 @@ import pg from 'pg';
 
 import { client } from './bot.js';
 import { TICKET_CLOSE_OVERRIDE_ROLE_IDS } from './config/tickets.js';
-import {
-  TEST_WELCOME_COMMAND_NAME,
-  WELCOME_WELCOME_LOGO_COMMAND_NAME
-} from './welcomeCommands.js';
 
 const { Pool } = pg;
 const pool = new Pool({
@@ -19,6 +15,8 @@ const pool = new Pool({
 
 const WELCOME_CHANNEL_ID = process.env.WELCOME_CHANNEL_ID;
 const TIKTOK_URL = 'https://www.tiktok.com/@thelastcoalition';
+const WELCOME_LOGO_COMMAND_NAME = 'welcomelogo';
+const TEST_WELCOME_COMMAND_NAME = 'testwelcome';
 const DEFAULT_LOGO_FILENAME = 'tlc-welcome-logo.png';
 
 function hasOverrideRole(member) {
