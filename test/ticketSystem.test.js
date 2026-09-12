@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   TICKET_CLOSE_OVERRIDE_ROLE_IDS,
   TICKET_CONFIG,
+  TICKET_TRAINEE_APPROVER_ROLE_IDS,
   TICKET_TYPES
 } from '../src/config/tickets.js';
 import { __ticketInternals } from '../src/ticketSystem.js';
@@ -13,7 +14,8 @@ const {
   buildTicketButtons,
   getCurrentHandlerRoleIds,
   getNextEscalationRoleIds,
-  parseTicketButton
+  parseTicketButton,
+  canApproveTrainee
 } = __ticketInternals;
 
 test('support dropdown exposes all seven TLC ticket types', () => {
@@ -136,6 +138,10 @@ test('ticket button parser accepts valid controls and rejects unrelated IDs', ()
     action: 'close_reason',
     ticketNumber: 999
   });
+  assert.deepEqual(parseTicketButton('tlc_ticket_approve_trainee:227'), {
+    action: 'approve_trainee',
+    ticketNumber: 227
+  });
   assert.equal(parseTicketButton('show_mods'), null);
   assert.equal(parseTicketButton('tlc_ticket_claim:not-a-number'), null);
 });
@@ -173,4 +179,73 @@ test('pilot and drone applications notify priority staff immediately without esc
     ]);
     assert.deepEqual(type.escalationLevels, []);
   }
+});
+
+test('pilot and drone tickets expose trainee approval controls', () => {
+  const pilot = {
+    ticket_type: 'dedicated_pilot',
+    escalation_index: 0,
+    ticket_number: 301,
+    trainee_approved_at: null
+  };
+  const drone = {
+    ticket_type: 'drone_operator',
+    escalation_index: 0,
+    ticket_number: 302,
+    trainee_approved_at: null
+  };
+
+  for (const ticket of [pilot, drone]) {
+    const row = buildTicketButtons(ticket).toJSON();
+    const approvalButton = row.components.find(
+      component => component.custom_id === `tlc_ticket_approve_trainee:${ticket.ticket_number}`
+    );
+
+    assert.ok(approvalButton);
+    assert.equal(approvalButton.label, 'Approve as Trainee');
+    assert.equal(approvalButton.disabled, false);
+  }
+});
+
+test('approved trainee button becomes disabled', () => {
+  const row = buildTicketButtons({
+    ticket_type: 'dedicated_pilot',
+    escalation_index: 0,
+    ticket_number: 303,
+    trainee_approved_at: new Date().toISOString()
+  }).toJSON();
+
+  const approvalButton = row.components.find(
+    component => component.custom_id === 'tlc_ticket_approve_trainee:303'
+  );
+
+  assert.equal(approvalButton.label, 'Trainee Approved');
+  assert.equal(approvalButton.disabled, true);
+});
+
+test('trainee approval configuration uses the requested role IDs and senior approvers', () => {
+  assert.equal(TICKET_CONFIG.roles.traineePilot, '1546935180713926766');
+  assert.equal(TICKET_CONFIG.roles.traineeDroneOperator, '1548325333327945758');
+
+  assert.equal(
+    TICKET_TYPES.dedicated_pilot.traineeApproval.roleId,
+    TICKET_CONFIG.roles.traineePilot
+  );
+  assert.equal(
+    TICKET_TYPES.drone_operator.traineeApproval.roleId,
+    TICKET_CONFIG.roles.traineeDroneOperator
+  );
+
+  assert.deepEqual([...TICKET_TRAINEE_APPROVER_ROLE_IDS], [
+    TICKET_CONFIG.roles.owner,
+    TICKET_CONFIG.roles.seniorAdmin,
+    TICKET_CONFIG.roles.discordAdmin
+  ]);
+
+  const member = {
+    roles: {
+      cache: new Map([[TICKET_CONFIG.roles.discordAdmin, { id: TICKET_CONFIG.roles.discordAdmin }]])
+    }
+  };
+  assert.equal(canApproveTrainee(member), true);
 });
