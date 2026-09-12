@@ -6,6 +6,7 @@ import './blacklistBridge.js';
 import './ticketBootstrap.js';
 import './supportBannerCommand.js';
 import './bot.js';
+import './welcomeSystem.js';
 
 const serverModeCommand = new SlashCommandBuilder()
   .setName('servermode')
