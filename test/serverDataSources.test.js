@@ -27,7 +27,7 @@ test('BattleMetrics normalization validates status and counts', () => {
   assert.deepEqual(normalizeBattleMetricsServer({ data: { attributes: {
     status: 'online', players: 64, maxPlayers: 128
   } } }), {
-    isOnline: true, players: 64, maxPlayers: 128, queue: 0, __dataSource: 'BattleMetrics'
+    isOnline: true, players: 64, maxPlayers: 128, queue: null, __dataSource: 'BattleMetrics'
   });
   assert.throws(() => normalizeBattleMetricsServer({ data: { attributes: {
     status: 'online', players: 129, maxPlayers: 128
@@ -69,6 +69,7 @@ test('BattleMetrics is preferred by the secondary status client', async () => {
   });
   assert.equal(result.source, 'BattleMetrics');
   assert.equal(result.value.players, 91);
+  assert.equal(result.value.queue, null);
   assert.equal(calls.length, 1);
   assert.match(calls[0], /battlemetrics\.com\/servers\/40653024$/);
 });
