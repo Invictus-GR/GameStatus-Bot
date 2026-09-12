@@ -78,6 +78,13 @@ import {
   withFallback
 } from './serverDataSources.js';
 import { initializeGeneralSupportMessage } from './generalSupportMessage.js';
+import { supportBannerCommand } from './supportBannerCommand.js';
+import {
+  blacklistCommand,
+  prebanCommand,
+  unprebanCommand
+} from './blacklistBridge.js';
+import { serverModeCommand } from './serverModeBridge.js';
 
 const { Pool } = pg;
 const pool = new Pool({
@@ -2638,10 +2645,15 @@ client.once('clientReady', async () => {
     backfillModsCommand,
     modChangesCommand,
     welcomeLogoCommand,
-    testWelcomeCommand
+    testWelcomeCommand,
+    supportBannerCommand,
+    prebanCommand,
+    unprebanCommand,
+    blacklistCommand,
+    serverModeCommand
   ]);
   console.log(
-    '/changelog, /warn, /say, /test, /backfillmods, /modchanges, /welcomelogo and /testwelcome commands registered'
+    '/changelog, /warn, /say, /test, /backfillmods, /modchanges, /welcomelogo, /testwelcome, /supportbanner, /preban, /unpreban, /blacklist and /servermode commands registered'
   );
   console.log(`Discord bot connected as ${client.user.tag}`);
 
