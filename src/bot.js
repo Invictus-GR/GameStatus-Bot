@@ -1470,19 +1470,6 @@ async function checkQueueAlerts(queue, players, maxPlayers) {
     return;
   }
 
-  let previousLevel = 0;
-
-  if (previousAlert) {
-    const title = previousAlert.embeds[0]?.title || '';
-    if (title.includes('MAXED')) previousLevel = 25;
-    else if (title.includes('PACKED')) previousLevel = 20;
-    else if (title.includes('FILLING')) previousLevel = 10;
-  }
-
-  if (level <= previousLevel) {
-    return;
-  }
-
   let title;
   let description;
   let color;
@@ -1522,12 +1509,14 @@ async function checkQueueAlerts(queue, players, maxPlayers) {
     .setFooter({ text: FOOTER_TEXT })
     .setTimestamp();
 
-  for (const [, message] of alerts) {
-    await message.delete().catch(() => {});
+  if (previousAlert) {
+    await previousAlert.edit({ embeds: [embed] });
+    console.log(`Queue alert updated: ${level}+ (queue ${queue})`);
+    return;
   }
 
   await channel.send({ embeds: [embed] });
-  console.log(`Queue alert sent: ${level}+`);
+  console.log(`Queue alert sent: ${level}+ (queue ${queue})`);
 }
 
 async function setBotPresence(name, status) {
