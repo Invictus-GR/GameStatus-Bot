@@ -78,7 +78,11 @@ import {
   withFallback
 } from './serverDataSources.js';
 import { initializeGeneralSupportMessage } from './generalSupportMessage.js';
-import { supportBannerCommand } from './supportBannerCommand.js';
+import {
+  registerSupportBannerCommandHandler,
+  supportBannerCommand
+} from './supportBannerCommand.js';
+import { initializeTicketBootstrap } from './ticketBootstrap.js';
 import {
   blacklistCommand,
   prebanCommand,
@@ -992,6 +996,8 @@ async function sendDailyReport() {
 export const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
+
+registerSupportBannerCommandHandler(client);
 
 const SERVER_URL =
   'https://www.armahq.com/servers/1d8007f8-bc4d-45a6-86db-f1091aed4300';
@@ -2611,6 +2617,13 @@ client.on('guildMemberRemove', async member => {
 client.once('clientReady', async () => {
   await testDatabaseConnection();
   await initializeDatabase();
+
+  try {
+    await initializeTicketBootstrap(client);
+  } catch (error) {
+    console.error('❌ [TICKETS] Ticket system initialization failed:', error);
+  }
+
   await restoreServerIdentity();
   await pruneServerMetricSamples();
   await restoreModWatcherState();

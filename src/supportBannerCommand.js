@@ -1,6 +1,5 @@
 import {
   AttachmentBuilder,
-  Client,
   EmbedBuilder,
   MessageFlags,
   SlashCommandBuilder
@@ -97,48 +96,47 @@ async function applyUploadedBanner(client, attachment) {
 }
 
 const initializedClients = new WeakSet();
-const originalLogin = Client.prototype.login;
 
-Client.prototype.login = function patchedSupportBannerLogin(...args) {
-  const client = this;
+export function registerSupportBannerCommandHandler(client) {
+  if (!client) {
+    throw new TypeError('Discord client is required for support banner handling.');
+  }
 
-  if (!initializedClients.has(client)) {
-    initializedClients.add(client);
+  if (initializedClients.has(client)) return;
+  initializedClients.add(client);
 
-    client.on('interactionCreate', interaction => {
-      if (!interaction.isChatInputCommand() || interaction.commandName !== COMMAND_NAME) {
+  client.on('interactionCreate', interaction => {
+    if (!interaction.isChatInputCommand() || interaction.commandName !== COMMAND_NAME) {
+      return;
+    }
+
+    void (async () => {
+      if (!hasOverrideRole(interaction.member)) {
+        await interaction.reply({
+          content: '❌ You are not authorized to replace the TLC support banner.',
+          flags: MessageFlags.Ephemeral
+        });
         return;
       }
 
-      void (async () => {
-        if (!hasOverrideRole(interaction.member)) {
-          await interaction.reply({
-            content: '❌ You are not authorized to replace the TLC support banner.',
-            flags: MessageFlags.Ephemeral
-          });
-          return;
-        }
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const attachment = interaction.options.getAttachment('image', true);
+      await applyUploadedBanner(client, attachment);
+      await interaction.editReply('✅ TLC Support Center banner replaced successfully.');
+    })().catch(async error => {
+      console.error('❌ [TICKETS] Failed to replace support banner:', error);
 
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        const attachment = interaction.options.getAttachment('image', true);
-        await applyUploadedBanner(client, attachment);
-        await interaction.editReply('✅ TLC Support Center banner replaced successfully.');
-      })().catch(async error => {
-        console.error('❌ [TICKETS] Failed to replace support banner:', error);
-
-        if (interaction.deferred || interaction.replied) {
-          await interaction.editReply('❌ The support banner could not be replaced.').catch(() => {});
-        } else {
-          await interaction.reply({
-            content: '❌ The support banner could not be replaced.',
-            flags: MessageFlags.Ephemeral
-          }).catch(() => {});
-        }
-      });
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply('❌ The support banner could not be replaced.').catch(() => {});
+      } else {
+        await interaction.reply({
+          content: '❌ The support banner could not be replaced.',
+          flags: MessageFlags.Ephemeral
+        }).catch(() => {});
+      }
     });
-  }
+  });
 
-  return originalLogin.apply(client, args);
-};
+  console.log('✅ [TICKETS] Support banner command handler registered.');
+}
 
-console.log('✅ [TICKETS] Support banner command bridge armed.');
