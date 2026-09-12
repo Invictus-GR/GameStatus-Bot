@@ -244,7 +244,11 @@ test('trainee approval configuration uses the requested role IDs and senior appr
 
   const member = {
     roles: {
-      cache: new Map([[TICKET_CONFIG.roles.discordAdmin, { id: TICKET_CONFIG.roles.discordAdmin }]])
+      cache: {
+        some(predicate) {
+          return predicate({ id: TICKET_CONFIG.roles.discordAdmin });
+        }
+      }
     }
   };
   assert.equal(canApproveTrainee(member), true);
